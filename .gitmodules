@@ -1,0 +1,30 @@
+[submodule "frontend-portal"]
+	path = frontend-portal
+	url = https://github.com/PWR-ISI/frontend-portal.git
+[submodule "api-gateway"]
+	path = api-gateway
+	url = https://github.com/PWR-ISI/api-gateway.git
+[submodule "auth-identity-service"]
+	path = auth-identity-service
+	url = https://github.com/PWR-ISI/auth-identity-service.git
+[submodule "appointment-service"]
+	path = appointment-service
+	url = https://github.com/PWR-ISI/appointment-service.git
+[submodule "schedule-service"]
+	path = schedule-service
+	url = https://github.com/PWR-ISI/schedule-service.git
+[submodule "notification-service"]
+	path = notification-service
+	url = https://github.com/PWR-ISI/notification-service.git
+[submodule "payment-service"]
+	path = payment-service
+	url = https://github.com/PWR-ISI/payment-service.git
+[submodule "facility-staff-service"]
+	path = facility-staff-service
+	url = https://github.com/PWR-ISI/facility-staff-service.git
+[submodule "medical-record-service"]
+	path = medical-record-service
+	url = https://github.com/PWR-ISI/medical-record-service.git
+[submodule "audit-logging-service"]
+	path = audit-logging-service
+	url = https://github.com/PWR-ISI/audit-logging-service.git
