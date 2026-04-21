@@ -1,0 +1,9 @@
+# prod-config .gitignore
+
+# Ignore environment and build artifacts
+.env
+*.env
+*.pyc
+__pycache__/
+.vscode/
+.idea/
