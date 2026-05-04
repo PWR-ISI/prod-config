@@ -1,0 +1,67 @@
+services:
+  localstack:
+    image: localstack/localstack-pro:latest
+    container_name: prod-localstack
+    ports:
+      - "127.0.0.1:4566:4566"
+      - "127.0.0.1:4510-4559:4510-4559"
+    environment:
+      - SERVICES=apigateway,sqs,s3,cognito-idp,sns,iam,sts,logs,lambda,dynamodb,ecr,ecs
+      - DEBUG=1
+      - AWS_DEFAULT_REGION=us-east-1
+      - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN}
+      - PERSISTENCE=1
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./localstack-init:/etc/localstack/init/ready.d"
+      - "./localstack-data:/var/lib/localstack"
+
+  auth-service:
+    build:
+      context: ./auth-identity-service
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_REGION=us-east-1
+      - COGNITO_USER_POOL_ID=local-user-pool
+      - ALLOWED_HOSTS=*
+    depends_on:
+      - localstack
+    ports:
+      - "8001:8000"
+
+  core-service:
+    build:
+      context: ./appointment-service
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_REGION=us-east-1
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/app-events
+      - ALLOWED_HOSTS=*
+    depends_on:
+      - localstack
+    ports:
+      - "8002:8000"
+
+  notification-service:
+    build:
+      context: ./notification-service
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_REGION=us-east-1
+      - SNS_TOPIC_ARN=arn:aws:sns:us-east-1:000000000000:notifications
+      - ALLOWED_HOSTS=*
+    depends_on:
+      - localstack
+    ports:
+      - "8003:8000"
+
+  frontend:
+    build:
+      context: ./frontend-portal
+    ports:
+      - "3000:80"
+    depends_on:
+      - auth-service
+      - core-service
+      - notification-service

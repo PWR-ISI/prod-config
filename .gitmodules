@@ -1,9 +1,6 @@
 [submodule "frontend-portal"]
 	path = frontend-portal
 	url = https://github.com/PWR-ISI/frontend-portal.git
-[submodule "api-gateway"]
-	path = api-gateway
-	url = https://github.com/PWR-ISI/api-gateway.git
 [submodule "auth-identity-service"]
 	path = auth-identity-service
 	url = https://github.com/PWR-ISI/auth-identity-service.git
