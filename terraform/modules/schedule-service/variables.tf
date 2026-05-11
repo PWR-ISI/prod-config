@@ -37,12 +37,12 @@ variable "db_security_group_id" {
 
 variable "db_username" {
   type    = string
-  default = "appuser"
+  default = "scheduleuser"
 }
 
 variable "db_password" {
   type      = string
   sensitive = true
-  default   = "appuser123"
+  default   = "scheduleuser123"
 }
 
