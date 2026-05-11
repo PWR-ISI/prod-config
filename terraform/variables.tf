@@ -3,34 +3,39 @@ variable "project_name" {
   default = "prod-config"
 }
 
+variable "region" {
+  type    = string
+  default = "us-east-1"
+}
+
 variable "vpc_id" {
   type    = string
-  default = ""
+  default = "vpc-localstack"
 }
 
 variable "public_subnets" {
   type    = list(string)
-  default = []
+  default = ["subnet-public-1", "subnet-public-2"]
 }
 
 variable "private_subnets" {
   type    = list(string)
-  default = []
+  default = ["subnet-private-1", "subnet-private-2"]
 }
 
 variable "db_subnets" {
   type    = list(string)
-  default = []
+  default = ["subnet-db-1", "subnet-db-2"]
 }
 
 variable "ecs_security_group_id" {
   type    = string
-  default = ""
+  default = "sg-ecs-localstack"
 }
 
 variable "db_security_group_id" {
   type    = string
-  default = ""
+  default = "sg-db-localstack"
 }
 
 variable "db_username" {

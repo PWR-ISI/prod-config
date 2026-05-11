@@ -4,15 +4,22 @@ locals {
 
 resource "aws_ecr_repository" "core" {
   name = "${local.name}-repo"
+
+  image_scanning_configuration { scan_on_push = false }
+  force_delete = true
+}
+
+resource "aws_cloudwatch_log_group" "core" {
+  name              = "/ecs/${local.name}"
+  retention_in_days = 7
 }
 
 resource "aws_ecs_cluster" "cluster" {
   name = "${local.name}-cluster"
 }
 
-# IAM role for task execution
 resource "aws_iam_role" "task_exec_role" {
-  name = "${local.name}-task-exec"
+  name               = "${local.name}-task-exec"
   assume_role_policy = data.aws_iam_policy_document.ecs_task_assume_role.json
 }
 
@@ -20,7 +27,7 @@ data "aws_iam_policy_document" "ecs_task_assume_role" {
   statement {
     actions = ["sts:AssumeRole"]
     principals {
-      type = "Service"
+      type        = "Service"
       identifiers = ["ecs-tasks.amazonaws.com"]
     }
   }
@@ -31,19 +38,50 @@ resource "aws_iam_role_policy_attachment" "exec_attach" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# ALB
+resource "aws_iam_role" "task_role" {
+  name               = "${local.name}-task"
+  assume_role_policy = data.aws_iam_policy_document.ecs_task_assume_role.json
+}
+
+resource "aws_iam_role_policy" "task_role_policy" {
+  role = aws_iam_role.task_role.name
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "sqs:SendMessage", "sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes",
+        "sns:Publish",
+        "cognito-idp:*",
+        "logs:CreateLogStream", "logs:PutLogEvents"
+      ]
+      Resource = "*"
+    }]
+  })
+}
+
 resource "aws_lb" "alb" {
   name               = "${local.name}-alb"
   internal           = false
   load_balancer_type = "application"
-  subnets            = var.public_subnets # set in variables or use existing VPC
+  subnets            = var.public_subnets
+  security_groups    = [var.ecs_security_group_id]
 }
 
 resource "aws_lb_target_group" "tg" {
-  name     = "${local.name}-tg"
-  port     = 80
-  protocol = "HTTP"
-  vpc_id   = var.vpc_id
+  name        = "${local.name}-tg"
+  port        = 8000
+  protocol    = "HTTP"
+  vpc_id      = var.vpc_id
+  target_type = "ip"
+
+  health_check {
+    path                = "/healthz"
+    matcher             = "200-399"
+    interval            = 30
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+  }
 }
 
 resource "aws_lb_listener" "http" {
@@ -57,7 +95,6 @@ resource "aws_lb_listener" "http" {
   }
 }
 
-# Task definition
 resource "aws_ecs_task_definition" "task" {
   family                   = "${local.name}-task"
   network_mode             = "awsvpc"
@@ -65,22 +102,37 @@ resource "aws_ecs_task_definition" "task" {
   cpu                      = "512"
   memory                   = "1024"
   execution_role_arn       = aws_iam_role.task_exec_role.arn
+  task_role_arn            = aws_iam_role.task_role.arn
 
   container_definitions = jsonencode([
     {
-      name  = "core"
-      image = "${aws_ecr_repository.core.repository_url}:latest"      # make sure image exists
-      essential = true
-      portMappings = [{ containerPort = 8000, hostPort = 8000 }]
+      name         = "core"
+      image        = "${aws_ecr_repository.core.repository_url}:latest"
+      essential    = true
+      portMappings = [{ containerPort = 8000, hostPort = 8000, protocol = "tcp" }]
       environment = [
         { name = "AWS_REGION", value = var.region },
-        { name = "DB_HOST", value = aws_db_instance.core.address }
+        { name = "AWS_DEFAULT_REGION", value = var.region },
+        { name = "DB_HOST", value = aws_db_instance.core.address },
+        { name = "DB_PORT", value = "5432" },
+        { name = "DB_NAME", value = "coredb" },
+        { name = "DB_USER", value = var.db_username },
+        { name = "DB_PASSWORD", value = var.db_password },
+        { name = "SQS_APP_EVENTS_URL", value = var.sqs_app_events_url },
+        { name = "COGNITO_USER_POOL_ID", value = var.cognito_user_pool_id },
       ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.core.name
+          awslogs-region        = var.region
+          awslogs-stream-prefix = "core"
+        }
+      }
     }
   ])
 }
 
-# ECS service
 resource "aws_ecs_service" "service" {
   name            = "${local.name}-svc"
   cluster         = aws_ecs_cluster.cluster.id
@@ -89,8 +141,9 @@ resource "aws_ecs_service" "service" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets         = var.private_subnets
-    security_groups = [var.ecs_security_group_id]
+    subnets          = var.private_subnets
+    security_groups  = [var.ecs_security_group_id]
+    assign_public_ip = true
   }
 
   load_balancer {
@@ -98,9 +151,10 @@ resource "aws_ecs_service" "service" {
     container_name   = "core"
     container_port   = 8000
   }
+
+  depends_on = [aws_lb_listener.http]
 }
 
-# Autoscaling (example)
 resource "aws_appautoscaling_target" "ecs_target" {
   max_capacity       = 4
   min_capacity       = 2
@@ -124,21 +178,20 @@ resource "aws_appautoscaling_policy" "scale_up" {
   }
 }
 
-# RDS Postgres (production). Note: RDS is not fully emulated by LocalStack.
 resource "aws_db_subnet_group" "db_subnets" {
   name       = "${local.name}-dbsubnet"
   subnet_ids = var.db_subnets
 }
 
 resource "aws_db_instance" "core" {
-  allocated_storage    = 20
-  engine               = "postgres"
-  engine_version       = "15"
-  instance_class       = "db.t3.micro"
-  db_name                 = "coredb"
-  username             = var.db_username
-  password             = var.db_password
-  skip_final_snapshot  = true
-  db_subnet_group_name = aws_db_subnet_group.db_subnets.name
+  allocated_storage      = 20
+  engine                 = "postgres"
+  engine_version         = "15"
+  instance_class         = "db.t3.micro"
+  db_name                = "coredb"
+  username               = var.db_username
+  password               = var.db_password
+  skip_final_snapshot    = true
+  db_subnet_group_name   = aws_db_subnet_group.db_subnets.name
   vpc_security_group_ids = [var.db_security_group_id]
 }
