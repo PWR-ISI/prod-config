@@ -1,52 +1,47 @@
-variable "project_name" {
-  type    = string
-  default = "prod-config"
-}
-
-variable "region" {
-  type    = string
-  default = "us-east-1"
-}
-
-variable "vpc_id" {
-  type    = string
-  default = "vpc-localstack"
-}
+variable "project_name" { type = string }
+variable "region" { type = string }
+variable "vpc_id" { type = string }
 
 variable "public_subnets" {
   type    = list(string)
-  default = ["subnet-public-1", "subnet-public-2"]
+  default = []
 }
 
 variable "private_subnets" {
   type    = list(string)
-  default = ["subnet-private-1", "subnet-private-2"]
+  default = []
 }
 
 variable "db_subnets" {
   type    = list(string)
-  default = ["subnet-db-1", "subnet-db-2"]
+  default = []
 }
 
 variable "ecs_security_group_id" {
   type    = string
-  default = "sg-ecs-localstack"
+  default = ""
 }
 
 variable "db_security_group_id" {
   type    = string
-  default = "sg-db-localstack"
+  default = ""
+}
+
+variable "db_host" {
+  type        = string
+  description = "DB host for ECS task. Override to a real container hostname for local dev (LocalStack RDS has no real connectivity)."
+  default     = ""  # empty = use aws_db_instance endpoint
 }
 
 variable "db_username" {
   type    = string
-  default = "appuser"
+  default = "payment_user"
 }
 
 variable "db_password" {
   type      = string
   sensitive = true
-  default   = "appuser123"
+  default   = "payment_pass"
 }
 
 variable "payu_merchant_id" {

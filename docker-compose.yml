@@ -6,7 +6,7 @@ services:
       - "127.0.0.1:4566:4566"
       - "127.0.0.1:4510-4559:4510-4559"
     environment:
-      - SERVICES=apigateway,apigatewayv2,sqs,sns,s3,cognito-idp,iam,sts,logs,lambda,dynamodb,ecr,ecs,elbv2,rds,cloudwatch,events
+      - SERVICES=apigateway,apigatewayv2,sqs,sns,s3,cognito-idp,iam,sts,logs,lambda,dynamodb,ecr,ecs,elbv2,rds,cloudwatch,events,ec2
       - DEBUG=1
       - AWS_DEFAULT_REGION=us-east-1
       - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN}
@@ -24,127 +24,7 @@ services:
       retries: 40
       start_period: 20s
 
-  postgres:
-    image: postgres:15
-    container_name: prod-postgres
-    environment:
-      - POSTGRES_USER=appuser
-      - POSTGRES_PASSWORD=appuser123
-      - POSTGRES_DB=coredb
-    ports:
-      - "127.0.0.1:5432:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U appuser -d coredb"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  auth-service:
-    build:
-      context: ./auth-identity-service
-    env_file:
-      - ./localstack-init/ids.env
-    environment:
-      - AWS_ENDPOINT_URL=http://localstack:4566
-      - AWS_REGION=us-east-1
-      - AWS_DEFAULT_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=coredb
-      - DB_USER=appuser
-      - DB_PASSWORD=appuser123
-      - ALLOWED_HOSTS=*
-    depends_on:
-      localstack:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-    ports:
-      - "8001:8000"
-
-  core-service:
-    build:
-      context: ./appointment-service
-    env_file:
-      - ./localstack-init/ids.env
-    environment:
-      - AWS_ENDPOINT_URL=http://localstack:4566
-      - AWS_REGION=us-east-1
-      - AWS_DEFAULT_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=coredb
-      - DB_USER=appuser
-      - DB_PASSWORD=appuser123
-      - ALLOWED_HOSTS=*
-    depends_on:
-      localstack:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-    ports:
-      - "8002:8000"
-
-  notification-service:
-    build:
-      context: ./notification-service
-    env_file:
-      - ./localstack-init/ids.env
-    environment:
-      - AWS_ENDPOINT_URL=http://localstack:4566
-      - AWS_REGION=us-east-1
-      - AWS_DEFAULT_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=coredb
-      - DB_USER=appuser
-      - DB_PASSWORD=appuser123
-      - ALLOWED_HOSTS=*
-    depends_on:
-      localstack:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-    ports:
-      - "8003:8000"
-
-  payment-service:
-    build:
-      context: ./payment-service
-    container_name: prod-config-payment-service
-    command: >
-      sh -c "python manage.py migrate --noinput &&
-             gunicorn payment.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 120"
-    env_file:
-      - ./localstack-init/ids.env
-    environment:
-      - AWS_ENDPOINT_URL=http://localstack:4566
-      - AWS_REGION=us-east-1
-      - AWS_DEFAULT_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - DJANGO_DB_HOST=postgres-payment
-      - DJANGO_DB_PORT=5432
-      - DJANGO_DB_NAME=payment_db
-      - DJANGO_DB_USER=payment_user
-      - DJANGO_DB_PASSWORD=payment_pass
-      - ALLOWED_HOSTS=*
-    depends_on:
-      localstack:
-        condition: service_healthy
-      postgres-payment:
-        condition: service_healthy
-    ports:
-      - "8004:8000"
-
+  # Real Postgres for payment-service ECS tasks (LocalStack RDS emulation has no real connectivity).
   postgres-payment:
     image: postgres:15-alpine
     container_name: prod-config-postgres-payment
@@ -160,17 +40,5 @@ services:
       timeout: 3s
       retries: 10
 
-  frontend:
-    build:
-      context: ./frontend-portal
-    ports:
-      - "3000:80"
-    depends_on:
-      - auth-service
-      - core-service
-      - notification-service
-      - payment-service
-
 volumes:
-  postgres-data:
   postgres-payment-data:

@@ -7,6 +7,11 @@ REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 ACCOUNT_ID="000000000000"
 IDS_FILE="/etc/localstack/init/ready.d/ids.env"
 
+if [ -f "$IDS_FILE" ]; then
+  echo "[bootstrap] ids.env already exists — resources already provisioned, skipping."
+  exit 0
+fi
+
 echo "[bootstrap] creating SQS queues..."
 awslocal sqs create-queue --queue-name app-events >/dev/null
 awslocal sqs create-queue --queue-name appointment-events >/dev/null
@@ -48,40 +53,6 @@ awslocal cognito-idp admin-set-user-password \
   --password Test1234 \
   --permanent >/dev/null
 
-echo "[bootstrap] creating API Gateway v2 (HTTP API)..."
-API_ID="$(awslocal apigatewayv2 create-api \
-  --name prod-config-gateway \
-  --protocol-type HTTP \
-  --query 'ApiId' --output text)"
-
-create_route() {
-  local route_key="$1"
-  local target_host="$2"
-  local target_port="$3"
-
-  INT_ID="$(awslocal apigatewayv2 create-integration \
-    --api-id "$API_ID" \
-    --integration-type HTTP_PROXY \
-    --integration-method ANY \
-    --payload-format-version 1.0 \
-    --integration-uri "http://${target_host}:${target_port}/{proxy}" \
-    --query 'IntegrationId' --output text)"
-
-  awslocal apigatewayv2 create-route \
-    --api-id "$API_ID" \
-    --route-key "$route_key" \
-    --target "integrations/${INT_ID}" >/dev/null
-}
-
-create_route "ANY /auth/{proxy+}"         "auth-service"         8000
-create_route "ANY /appointments/{proxy+}" "core-service"         8000
-create_route "ANY /notifications/{proxy+}" "notification-service" 8000
-
-awslocal apigatewayv2 create-stage \
-  --api-id "$API_ID" \
-  --stage-name local \
-  --auto-deploy >/dev/null
-
 echo "[bootstrap] creating ECR repositories (for terraform-driven Fargate deploys)..."
 for repo in prod-config-auth-repo prod-config-core-repo prod-config-notification-repo; do
   awslocal ecr create-repository --repository-name "$repo" >/dev/null 2>&1 || true
@@ -97,8 +68,6 @@ SQS_APP_EVENTS_URL=http://localstack:4566/${ACCOUNT_ID}/app-events
 SQS_NOTIFICATION_JOBS_URL=$NOTIF_QUEUE_URL
 AWS_SQS_PAYMENT_SUCCESS_QUEUE_URL=http://localstack:4566/${ACCOUNT_ID}/payment-success
 AWS_SQS_PAYMENT_FAILED_QUEUE_URL=http://localstack:4566/${ACCOUNT_ID}/payment-failed
-API_GATEWAY_ID=$API_ID
-API_GATEWAY_URL=http://localstack:4566/restapis/${API_ID}/local/_user_request_
 EOF
 
 echo "[bootstrap] done. IDs:"

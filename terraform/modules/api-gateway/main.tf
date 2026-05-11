@@ -23,6 +23,10 @@ variable "notification_service_url" {
   default = "http://notification-service:8000"
 }
 
+variable "payment_service_url" {
+  type = string
+}
+
 resource "aws_apigatewayv2_api" "main" {
   name          = "${var.project_name}-gateway"
   protocol_type = "HTTP"
@@ -68,6 +72,21 @@ resource "aws_apigatewayv2_route" "notification" {
   api_id    = aws_apigatewayv2_api.main.id
   route_key = "ANY /notifications/{proxy+}"
   target    = "integrations/${aws_apigatewayv2_integration.notification.id}"
+}
+
+resource "aws_apigatewayv2_integration" "payment" {
+  api_id                 = aws_apigatewayv2_api.main.id
+  integration_type       = "HTTP_PROXY"
+  integration_method     = "ANY"
+  # payment-service Django URL conf has /api/payments/ prefix
+  integration_uri        = "${var.payment_service_url}/api/payments/{proxy}"
+  payload_format_version = "1.0"
+}
+
+resource "aws_apigatewayv2_route" "payment" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "ANY /payments/{proxy+}"
+  target    = "integrations/${aws_apigatewayv2_integration.payment.id}"
 }
 
 resource "aws_apigatewayv2_stage" "local" {

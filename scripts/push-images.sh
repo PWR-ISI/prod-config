@@ -13,9 +13,7 @@ aws_local() {
 
 # service-context-path → ECR repo name (must match terraform).
 declare -A SERVICES=(
-  [auth-identity-service]="prod-config-auth-repo"
-  [appointment-service]="prod-config-core-repo"
-  [notification-service]="prod-config-notification-repo"
+  [payment-service]="prod-config-payment-repo"
 )
 
 for ctx in "${!SERVICES[@]}"; do

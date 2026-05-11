@@ -33,3 +33,19 @@ output "api_gateway_invoke_url" {
 output "api_gateway_id" {
   value = module.api_gateway.api_id
 }
+
+output "payment_service_alb_dns" {
+  value = module.payment_service.alb_dns
+}
+
+output "payment_ecr_repository_url" {
+  value = module.payment_service.ecr_repository_url
+}
+
+output "payment_ecs_cluster" {
+  value = module.payment_service.ecs_cluster
+}
+
+output "payment_ecs_service" {
+  value = module.payment_service.ecs_service
+}
