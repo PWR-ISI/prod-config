@@ -2,6 +2,8 @@
 
 Usage from IDE: open this file and run e.g. `up_appointment()` to bring up that service.
 Also usable as CLI: `python docker_compose_runner.py all` or `python docker_compose_runner.py appointment`
+
+Note: AWS API Gateway is provided by LocalStack — there is no separate api-gateway container.
 """
 from pathlib import Path
 import subprocess
@@ -18,10 +20,6 @@ def run_compose(files: List[str]):
     cmd += ["up", "-d", "--build"]
     print("Running:", " ".join(cmd))
     subprocess.run(cmd, check=True)
-
-
-def up_api_gateway():
-    run_compose(["api-gateway/docker-compose.yml"])
 
 
 def up_appointment():
@@ -62,7 +60,6 @@ def up_frontend():
 
 def up_all():
     files = [
-        "api-gateway/docker-compose.yml",
         "appointment-service/docker-compose.yml",
         "audit-logging-service/docker-compose.yml",
         "auth-identity-service/docker-compose.yml",
@@ -82,7 +79,6 @@ def main(argv: List[str]):
     name = argv[0]
     mapping = {
         "all": up_all,
-        "api-gateway": up_api_gateway,
         "appointment": up_appointment,
         "audit-logging": up_audit_logging,
         "auth-identity": up_auth_identity,

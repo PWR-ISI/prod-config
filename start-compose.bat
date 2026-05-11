@@ -1,19 +1,16 @@
 @echo off
-:: Usage: start-compose.bat all|api-gateway|appointment|audit-logging|auth-identity|facility-staff|medical-record|notification|payment|schedule|frontend
-:: Runs docker compose for the requested service(s)
+:: Usage: start-compose.bat all|appointment|audit-logging|auth-identity|facility-staff|medical-record|notification|payment|schedule|frontend
+:: Runs docker compose for the requested service(s).
+:: AWS API Gateway is provided by LocalStack — there is no separate api-gateway container.
 
 SET SERVICE=%1
 if "%SERVICE%"=="" set SERVICE=all
 
 if "%SERVICE%"=="all" (
-  docker compose -f api-gateway/docker-compose.yml -f appointment-service/docker-compose.yml -f audit-logging-service/docker-compose.yml -f auth-identity-service/docker-compose.yml -f facility-staff-service/docker-compose.yml -f medical-record-service/docker-compose.yml -f notification-service/docker-compose.yml -f payment-service/docker-compose.yml -f schedule-service/docker-compose.yml -f frontend-portal/docker-compose.yml up -d --build
+  docker compose -f appointment-service/docker-compose.yml -f audit-logging-service/docker-compose.yml -f auth-identity-service/docker-compose.yml -f facility-staff-service/docker-compose.yml -f medical-record-service/docker-compose.yml -f notification-service/docker-compose.yml -f payment-service/docker-compose.yml -f schedule-service/docker-compose.yml -f frontend-portal/docker-compose.yml up -d --build
   goto :eof
 )
 
-if "%SERVICE%"=="api-gateway" (
-  docker compose -f api-gateway/docker-compose.yml up -d --build
-  goto :eof
-)
 if "%SERVICE%"=="appointment" (
   docker compose -f appointment-service/docker-compose.yml up -d --build
   goto :eof

@@ -6,7 +6,7 @@ services:
       - "127.0.0.1:4566:4566"
       - "127.0.0.1:4510-4559:4510-4559"
     environment:
-      - SERVICES=apigateway,sqs,s3,cognito-idp,sns,iam,sts,logs,lambda,dynamodb,ecr,ecs
+      - SERVICES=apigateway,apigatewayv2,sqs,s3,cognito-idp,iam,sts,logs,secretsmanager,ecr,ecs
       - DEBUG=1
       - AWS_DEFAULT_REGION=us-east-1
       - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN}
@@ -16,32 +16,92 @@ services:
       - "/var/run/docker.sock:/var/run/docker.sock"
       - "./localstack-init:/etc/localstack/init/ready.d"
       - "./localstack-data:/var/lib/localstack"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
 
-  auth-service:
+  auth-identity-service:
     build:
       context: ./auth-identity-service
     environment:
       - AWS_ENDPOINT_URL=http://localstack:4566
       - AWS_REGION=us-east-1
-      - COGNITO_USER_POOL_ID=local-user-pool
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
+      - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
+      - COGNITO_REGION=us-east-1
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/auth-identity-service-queue
+      - DJANGO_SETTINGS_MODULE=config.settings.local
       - ALLOWED_HOSTS=*
     depends_on:
-      - localstack
+      localstack:
+        condition: service_healthy
     ports:
       - "8001:8000"
 
-  core-service:
+  appointment-service:
     build:
       context: ./appointment-service
     environment:
       - AWS_ENDPOINT_URL=http://localstack:4566
       - AWS_REGION=us-east-1
-      - SQS_QUEUE_URL=http://localstack:4566/000000000000/app-events
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
+      - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
+      - COGNITO_REGION=us-east-1
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/appointment-service-queue
+      - DJANGO_SETTINGS_MODULE=config.settings.local
       - ALLOWED_HOSTS=*
     depends_on:
-      - localstack
+      localstack:
+        condition: service_healthy
     ports:
       - "8002:8000"
+
+  schedule-service:
+    build:
+      context: ./schedule-service
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
+      - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
+      - COGNITO_REGION=us-east-1
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/schedule-service-queue
+      - DJANGO_SETTINGS_MODULE=config.settings.local
+      - ALLOWED_HOSTS=*
+    depends_on:
+      localstack:
+        condition: service_healthy
+    ports:
+      - "8003:8000"
+
+  payment-service:
+    build:
+      context: ./payment-service
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
+      - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
+      - COGNITO_REGION=us-east-1
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/payment-service-queue
+      - DJANGO_SETTINGS_MODULE=config.settings.local
+      - ALLOWED_HOSTS=*
+    depends_on:
+      localstack:
+        condition: service_healthy
+    ports:
+      - "8004:8000"
 
   notification-service:
     build:
@@ -49,19 +109,86 @@ services:
     environment:
       - AWS_ENDPOINT_URL=http://localstack:4566
       - AWS_REGION=us-east-1
-      - SNS_TOPIC_ARN=arn:aws:sns:us-east-1:000000000000:notifications
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
+      - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
+      - COGNITO_REGION=us-east-1
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/notification-service-queue
+      - DJANGO_SETTINGS_MODULE=config.settings.local
       - ALLOWED_HOSTS=*
     depends_on:
-      - localstack
+      localstack:
+        condition: service_healthy
     ports:
-      - "8003:8000"
+      - "8005:8000"
 
-  frontend:
+  facility-staff-service:
+    build:
+      context: ./facility-staff-service
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
+      - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
+      - COGNITO_REGION=us-east-1
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/facility-staff-service-queue
+      - DJANGO_SETTINGS_MODULE=config.settings.local
+      - ALLOWED_HOSTS=*
+    depends_on:
+      localstack:
+        condition: service_healthy
+    ports:
+      - "8006:8000"
+
+  medical-record-service:
+    build:
+      context: ./medical-record-service
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
+      - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
+      - COGNITO_REGION=us-east-1
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/medical-record-service-queue
+      - DJANGO_SETTINGS_MODULE=config.settings.local
+      - ALLOWED_HOSTS=*
+    depends_on:
+      localstack:
+        condition: service_healthy
+    ports:
+      - "8007:8000"
+
+  audit-logging-service:
+    build:
+      context: ./audit-logging-service
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
+      - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
+      - COGNITO_REGION=us-east-1
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/audit-service-queue
+      - DJANGO_SETTINGS_MODULE=config.settings.local
+      - ALLOWED_HOSTS=*
+    depends_on:
+      localstack:
+        condition: service_healthy
+    ports:
+      - "8008:8000"
+
+  frontend-portal:
     build:
       context: ./frontend-portal
     ports:
       - "3000:80"
     depends_on:
-      - auth-service
-      - core-service
+      - auth-identity-service
+      - appointment-service
       - notification-service
