@@ -6,7 +6,7 @@ services:
       - "127.0.0.1:4566:4566"
       - "127.0.0.1:4510-4559:4510-4559"
     environment:
-      - SERVICES=apigateway,apigatewayv2,sqs,s3,cognito-idp,iam,sts,logs,secretsmanager,ecr,ecs
+      - SERVICES=apigateway,apigatewayv2,sqs,sns,s3,cognito-idp,iam,sts,logs,secretsmanager,ecr,ecs
       - DEBUG=1
       - AWS_DEFAULT_REGION=us-east-1
       - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN}
@@ -23,6 +23,21 @@ services:
       retries: 15
       start_period: 30s
 
+  postgres-payment:
+    image: postgres:15-alpine
+    container_name: prod-config-postgres-payment
+    environment:
+      - POSTGRES_DB=payment_db
+      - POSTGRES_USER=payment_user
+      - POSTGRES_PASSWORD=payment_pass
+    volumes:
+      - postgres-payment-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payment_user -d payment_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   auth-identity-service:
     build:
       context: ./auth-identity-service
@@ -34,19 +49,12 @@ services:
       - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
       - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
       - COGNITO_REGION=us-east-1
-      - SQS_QUEUE_URL=http://localstack:4566/000000000000/auth-identity-service-queue
-      - DJANGO_SETTINGS_MODULE=config.settings.local
       - ALLOWED_HOSTS=*
     depends_on:
       localstack:
         condition: service_healthy
     ports:
       - "8001:8000"
-
-  # Real Postgres for payment-service ECS tasks (LocalStack RDS emulation has no real connectivity).
-  postgres-payment:
-    image: postgres:15-alpine
-    container_name: prod-config-postgres-payment
 
   appointment-service:
     build:
@@ -102,8 +110,14 @@ services:
       - SQS_QUEUE_URL=http://localstack:4566/000000000000/payment-service-queue
       - DJANGO_SETTINGS_MODULE=config.settings.local
       - ALLOWED_HOSTS=*
+      - DB_HOST=postgres-payment
+      - DB_NAME=payment_db
+      - DB_USER=payment_user
+      - DB_PASSWORD=payment_pass
     depends_on:
       localstack:
+        condition: service_healthy
+      postgres-payment:
         condition: service_healthy
     ports:
       - "8004:8000"
@@ -112,16 +126,6 @@ services:
     build:
       context: ./notification-service
     environment:
-      - POSTGRES_DB=payment_db
-      - POSTGRES_USER=payment_user
-      - POSTGRES_PASSWORD=payment_pass
-    volumes:
-      - postgres-payment-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U payment_user -d payment_db"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
       - AWS_ENDPOINT_URL=http://localstack:4566
       - AWS_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test
@@ -157,9 +161,6 @@ services:
         condition: service_healthy
     ports:
       - "8006:8000"
-
-volumes:
-  postgres-payment-data:
 
   medical-record-service:
     build:
@@ -210,3 +211,6 @@ volumes:
       - auth-identity-service
       - appointment-service
       - notification-service
+
+volumes:
+  postgres-payment-data:
