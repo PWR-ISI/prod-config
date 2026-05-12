@@ -1,6 +1,6 @@
 services:
   localstack:
-    image: localstack/localstack-pro:latest
+    image: ${LOCALSTACK_IMAGE:-localstack/localstack:latest}
     container_name: prod-localstack
     ports:
       - "127.0.0.1:4566:4566"
@@ -9,8 +9,7 @@ services:
       - SERVICES=apigateway,apigatewayv2,sqs,sns,s3,cognito-idp,iam,sts,logs,lambda,dynamodb,ecr,ecs,elbv2,rds,cloudwatch,events,ec2
       - DEBUG=1
       - AWS_DEFAULT_REGION=us-east-1
-      - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN}
-      - PERSISTENCE=1
+      - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN:-}
       - DOCKER_HOST=unix:///var/run/docker.sock
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"

@@ -1,23 +1,16 @@
 locals {
-  name = "${var.project_name}-core"
+  name = "${var.project_name}-schedule"
 }
 
-resource "aws_ecr_repository" "core" {
+resource "aws_ecr_repository" "schedule" {
   name = "${local.name}-repo"
-
-  image_scanning_configuration { scan_on_push = false }
-  force_delete = true
-}
-
-resource "aws_cloudwatch_log_group" "core" {
-  name              = "/ecs/${local.name}"
-  retention_in_days = 7
 }
 
 resource "aws_ecs_cluster" "cluster" {
   name = "${local.name}-cluster"
 }
 
+# IAM role for task execution
 resource "aws_iam_role" "task_exec_role" {
   name               = "${local.name}-task-exec"
   assume_role_policy = data.aws_iam_policy_document.ecs_task_assume_role.json
@@ -38,47 +31,55 @@ resource "aws_iam_role_policy_attachment" "exec_attach" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# Task role grants the running container access to SNS publish + SQS read.
 resource "aws_iam_role" "task_role" {
   name               = "${local.name}-task"
   assume_role_policy = data.aws_iam_policy_document.ecs_task_assume_role.json
 }
 
-resource "aws_iam_role_policy" "task_role_policy" {
-  role = aws_iam_role.task_role.name
+resource "aws_iam_role_policy" "task_role_sns_sqs" {
+  role = aws_iam_role.task_role.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "sqs:SendMessage", "sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes",
-        "sns:Publish",
-        "cognito-idp:*",
-        "logs:CreateLogStream", "logs:PutLogEvents"
-      ]
-      Resource = "*"
-    }]
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["sns:Publish"]
+        Resource = aws_sns_topic.schedule_events.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:GetQueueUrl",
+        ]
+        Resource = aws_sqs_queue.schedule_inbox.arn
+      },
+    ]
   })
 }
 
+# ALB
 resource "aws_lb" "alb" {
   name               = "${local.name}-alb"
   internal           = false
   load_balancer_type = "application"
   subnets            = var.public_subnets
-  security_groups    = [var.ecs_security_group_id]
 }
 
 resource "aws_lb_target_group" "tg" {
-  name        = "${local.name}-tg"
-  port        = 8000
-  protocol    = "HTTP"
-  vpc_id      = var.vpc_id
-  target_type = "ip"
+  name     = "${local.name}-tg"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = var.vpc_id
 
   health_check {
-    path                = "/healthz"
-    matcher             = "200-399"
+    path                = "/health/"
+    matcher             = "200"
     interval            = 30
+    timeout             = 5
     healthy_threshold   = 2
     unhealthy_threshold = 3
   }
@@ -95,6 +96,7 @@ resource "aws_lb_listener" "http" {
   }
 }
 
+# Task definition
 resource "aws_ecs_task_definition" "task" {
   family                   = "${local.name}-task"
   network_mode             = "awsvpc"
@@ -106,33 +108,25 @@ resource "aws_ecs_task_definition" "task" {
 
   container_definitions = jsonencode([
     {
-      name         = "core"
-      image        = "${aws_ecr_repository.core.repository_url}:latest"
-      essential    = true
-      portMappings = [{ containerPort = 8000, hostPort = 8000, protocol = "tcp" }]
+      name      = "schedule"
+      image     = "${aws_ecr_repository.schedule.repository_url}:latest"
+      essential = true
+      portMappings = [{ containerPort = 8000, hostPort = 8000 }]
       environment = [
         { name = "AWS_REGION", value = var.region },
-        { name = "AWS_DEFAULT_REGION", value = var.region },
-        { name = "DB_HOST", value = aws_db_instance.core.address },
-        { name = "DB_PORT", value = "5432" },
-        { name = "DB_NAME", value = "coredb" },
-        { name = "DB_USER", value = var.db_username },
-        { name = "DB_PASSWORD", value = var.db_password },
-        { name = "SQS_APP_EVENTS_URL", value = var.sqs_app_events_url },
-        { name = "COGNITO_USER_POOL_ID", value = var.cognito_user_pool_id },
+        { name = "DJANGO_DB_HOST", value = aws_db_instance.schedule.address },
+        { name = "DJANGO_DB_NAME", value = "scheduledb" },
+        { name = "DJANGO_DB_USER", value = var.db_username },
+        { name = "DJANGO_DB_PASSWORD", value = var.db_password },
+        { name = "SCHEDULE_SNS_TOPIC_ARN", value = aws_sns_topic.schedule_events.arn },
+        { name = "EVENTS_SQS_QUEUE_URL", value = aws_sqs_queue.schedule_inbox.url },
+        { name = "ALLOWED_HOSTS", value = "*" },
       ]
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          awslogs-group         = aws_cloudwatch_log_group.core.name
-          awslogs-region        = var.region
-          awslogs-stream-prefix = "core"
-        }
-      }
     }
   ])
 }
 
+# ECS service
 resource "aws_ecs_service" "service" {
   name            = "${local.name}-svc"
   cluster         = aws_ecs_cluster.cluster.id
@@ -141,20 +135,18 @@ resource "aws_ecs_service" "service" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = var.private_subnets
-    security_groups  = [var.ecs_security_group_id]
-    assign_public_ip = true
+    subnets         = var.private_subnets
+    security_groups = [var.ecs_security_group_id]
   }
 
   load_balancer {
     target_group_arn = aws_lb_target_group.tg.arn
-    container_name   = "core"
+    container_name   = "schedule"
     container_port   = 8000
   }
-
-  depends_on = [aws_lb_listener.http]
 }
 
+# Autoscaling
 resource "aws_appautoscaling_target" "ecs_target" {
   max_capacity       = 4
   min_capacity       = 2
@@ -178,17 +170,18 @@ resource "aws_appautoscaling_policy" "scale_up" {
   }
 }
 
+# RDS Postgres
 resource "aws_db_subnet_group" "db_subnets" {
   name       = "${local.name}-dbsubnet"
   subnet_ids = var.db_subnets
 }
 
-resource "aws_db_instance" "core" {
+resource "aws_db_instance" "schedule" {
   allocated_storage      = 20
   engine                 = "postgres"
   engine_version         = "15"
   instance_class         = "db.t3.micro"
-  db_name                = "coredb"
+  db_name                = "scheduledb"
   username               = var.db_username
   password               = var.db_password
   skip_final_snapshot    = true
@@ -196,27 +189,23 @@ resource "aws_db_instance" "core" {
   vpc_security_group_ids = [var.db_security_group_id]
 }
 
-# Domain event topic. appointment-service publishes here; schedule-service
-# (and notification, audit, etc.) subscribe via their own inbox queues.
-resource "aws_sns_topic" "appointment_events" {
+# Domain event topic and inbox queue
+resource "aws_sns_topic" "schedule_events" {
   name = "${local.name}-events"
 }
 
-# Inbox queue this service drains. Populated by subscriptions to other
-# services' topics — payment events especially.
-resource "aws_sqs_queue" "appointment_inbox" {
+resource "aws_sqs_queue" "schedule_inbox" {
   name                       = "${local.name}-inbox"
   visibility_timeout_seconds = 60
   message_retention_seconds  = 1209600
 }
 
-# Policy allowing SNS within this account to deliver to the inbox queue.
-# Cross-service subscriptions are declared at the root module to avoid
-# cyclic dependencies between sibling modules.
 data "aws_caller_identity" "current" {}
 
-resource "aws_sqs_queue_policy" "appointment_inbox_policy" {
-  queue_url = aws_sqs_queue.appointment_inbox.id
+# Cross-service subscriptions live in the root module to keep modules
+# acyclic; this policy allows any same-account SNS topic to deliver here.
+resource "aws_sqs_queue_policy" "schedule_inbox_policy" {
+  queue_url = aws_sqs_queue.schedule_inbox.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -224,7 +213,7 @@ resource "aws_sqs_queue_policy" "appointment_inbox_policy" {
       Effect    = "Allow"
       Principal = { Service = "sns.amazonaws.com" }
       Action    = "sqs:SendMessage"
-      Resource  = aws_sqs_queue.appointment_inbox.arn
+      Resource  = aws_sqs_queue.schedule_inbox.arn
       Condition = {
         StringEquals = {
           "aws:SourceAccount" = data.aws_caller_identity.current.account_id
