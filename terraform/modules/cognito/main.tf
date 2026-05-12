@@ -1,6 +1,15 @@
 resource "aws_cognito_user_pool" "medical" {
   name = "${var.project_name}-user-pool"
 
+  # Required email attribute
+  schema {
+    name                = "email"
+    attribute_data_type = "String"
+    required            = true
+    mutable             = true
+  }
+
+  # Custom role claim — read by every service from the forwarded JWT
   schema {
     name                     = "role"
     attribute_data_type      = "String"
@@ -15,9 +24,9 @@ resource "aws_cognito_user_pool" "medical" {
 
   password_policy {
     minimum_length    = 8
-    require_uppercase = true
-    require_lowercase = true
-    require_numbers   = true
+    require_uppercase = false
+    require_lowercase = false
+    require_numbers   = false
     require_symbols   = false
   }
 

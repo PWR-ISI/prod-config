@@ -32,10 +32,12 @@ resource "aws_apigatewayv2_stage" "default" {
   auto_deploy = true
 }
 
-# ── Per-service integrations + routes ──────────────────────────────────────────
+# ── Per-service integrations + routes ─────────────────────────────────────────
+# Only services with a non-empty endpoint get a route; safe to deploy
+# incrementally as service ALBs are added.
 
 locals {
-  services = {
+  all_services = {
     auth          = var.auth_service_endpoint
     appointments  = var.appointment_service_endpoint
     schedule      = var.schedule_service_endpoint
@@ -45,19 +47,17 @@ locals {
     records       = var.medical_record_service_endpoint
     audit         = var.audit_service_endpoint
   }
+  services = { for k, v in local.all_services : k => v if v != "" }
 }
 
 resource "aws_apigatewayv2_integration" "service" {
   for_each = local.services
 
-  api_id             = aws_apigatewayv2_api.medical.id
-  integration_type   = "HTTP_PROXY"
-  integration_method = "ANY"
-  integration_uri    = "http://${each.value}/api/v1/{proxy}"
-
-  request_parameters = {
-    "overwrite:path" = "$request.path.proxy"
-  }
+  api_id                 = aws_apigatewayv2_api.medical.id
+  integration_type       = "HTTP_PROXY"
+  integration_method     = "ANY"
+  integration_uri        = "http://${each.value}/api/v1/{proxy}"
+  payload_format_version = "1.0"
 }
 
 resource "aws_apigatewayv2_route" "service" {
@@ -71,17 +71,22 @@ resource "aws_apigatewayv2_route" "service" {
   authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
 }
 
-# Health check — unauthenticated, routes to auth service as a representative target
+# Health check — unauthenticated
 resource "aws_apigatewayv2_integration" "health" {
-  api_id             = aws_apigatewayv2_api.medical.id
-  integration_type   = "HTTP_PROXY"
-  integration_method = "GET"
-  integration_uri    = "http://${var.auth_service_endpoint}/health/"
+  count = var.auth_service_endpoint != "" ? 1 : 0
+
+  api_id                 = aws_apigatewayv2_api.medical.id
+  integration_type       = "HTTP_PROXY"
+  integration_method     = "GET"
+  integration_uri        = "http://${var.auth_service_endpoint}/health/"
+  payload_format_version = "1.0"
 }
 
 resource "aws_apigatewayv2_route" "health" {
+  count = var.auth_service_endpoint != "" ? 1 : 0
+
   api_id             = aws_apigatewayv2_api.medical.id
   route_key          = "GET /health"
-  target             = "integrations/${aws_apigatewayv2_integration.health.id}"
+  target             = "integrations/${aws_apigatewayv2_integration.health[0].id}"
   authorization_type = "NONE"
 }

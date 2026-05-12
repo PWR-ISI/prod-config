@@ -43,6 +43,11 @@ services:
     ports:
       - "8001:8000"
 
+  # Real Postgres for payment-service ECS tasks (LocalStack RDS emulation has no real connectivity).
+  postgres-payment:
+    image: postgres:15-alpine
+    container_name: prod-config-postgres-payment
+
   appointment-service:
     build:
       context: ./appointment-service
@@ -107,6 +112,16 @@ services:
     build:
       context: ./notification-service
     environment:
+      - POSTGRES_DB=payment_db
+      - POSTGRES_USER=payment_user
+      - POSTGRES_PASSWORD=payment_pass
+    volumes:
+      - postgres-payment-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payment_user -d payment_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
       - AWS_ENDPOINT_URL=http://localstack:4566
       - AWS_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test
@@ -142,6 +157,9 @@ services:
         condition: service_healthy
     ports:
       - "8006:8000"
+
+volumes:
+  postgres-payment-data:
 
   medical-record-service:
     build:

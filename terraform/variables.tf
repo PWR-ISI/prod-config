@@ -3,34 +3,39 @@ variable "project_name" {
   default = "prod-config"
 }
 
+variable "region" {
+  type    = string
+  default = "us-east-1"
+}
+
 variable "vpc_id" {
   type    = string
-  default = ""
+  default = "vpc-localstack"
 }
 
 variable "public_subnets" {
   type    = list(string)
-  default = []
+  default = ["subnet-public-1", "subnet-public-2"]
 }
 
 variable "private_subnets" {
   type    = list(string)
-  default = []
+  default = ["subnet-private-1", "subnet-private-2"]
 }
 
 variable "db_subnets" {
   type    = list(string)
-  default = []
+  default = ["subnet-db-1", "subnet-db-2"]
 }
 
 variable "ecs_security_group_id" {
   type    = string
-  default = ""
+  default = "sg-ecs-localstack"
 }
 
 variable "db_security_group_id" {
   type    = string
-  default = ""
+  default = "sg-db-localstack"
 }
 
 variable "db_username" {
@@ -44,7 +49,8 @@ variable "db_password" {
   default   = "appuser123"
 }
 
-# Service ALB endpoints — set these via tfvars in production (e.g. from ECS/ALB outputs)
+# ── Service ALB endpoints ──────────────────────────────────────────────────────
+# Leave empty until the service module is deployed; api-gateway skips empty entries.
 variable "auth_service_endpoint" {
   type    = string
   default = ""
@@ -83,4 +89,29 @@ variable "medical_record_service_endpoint" {
 variable "audit_service_endpoint" {
   type    = string
   default = ""
+}
+
+# ── PayU credentials (payment-service only) ────────────────────────────────────
+variable "payu_merchant_id" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "payu_api_key" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "payu_oauth_client_id" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "payu_oauth_client_secret" {
+  type      = string
+  sensitive = true
+  default   = ""
 }

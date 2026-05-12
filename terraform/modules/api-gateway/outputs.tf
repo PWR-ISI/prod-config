@@ -6,3 +6,8 @@ output "api_endpoint" {
   description = "Base invoke URL for the API Gateway"
   value       = aws_apigatewayv2_api.medical.api_endpoint
 }
+
+output "invoke_url" {
+  description = "Full invoke URL (alias for api_endpoint — $default stage auto-deploys)"
+  value       = aws_apigatewayv2_api.medical.api_endpoint
+}

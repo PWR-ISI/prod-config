@@ -3,7 +3,16 @@
 # Ignore environment and build artifacts
 .env
 *.env
+!.env.example
 *.pyc
 __pycache__/
 .vscode/
 .idea/
+
+# LocalStack persistence + generated IDs
+localstack-data/
+localstack-init/ids.env
+
+# Claude Code working directory
+.claude/
+
