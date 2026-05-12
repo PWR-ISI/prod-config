@@ -23,6 +23,36 @@ services:
       retries: 15
       start_period: 30s
 
+  postgres-appointment:
+    image: postgres:15-alpine
+    container_name: prod-config-postgres-appointment
+    environment:
+      - POSTGRES_DB=appointment_db
+      - POSTGRES_USER=appointment_user
+      - POSTGRES_PASSWORD=appointment_pass
+    volumes:
+      - postgres-appointment-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appointment_user -d appointment_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres-schedule:
+    image: postgres:15-alpine
+    container_name: prod-config-postgres-schedule
+    environment:
+      - POSTGRES_DB=schedule_db
+      - POSTGRES_USER=schedule_user
+      - POSTGRES_PASSWORD=schedule_pass
+    volumes:
+      - postgres-schedule-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U schedule_user -d schedule_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   postgres-payment:
     image: postgres:15-alpine
     container_name: prod-config-postgres-payment
@@ -66,12 +96,16 @@ services:
       - AWS_SECRET_ACCESS_KEY=test
       - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
       - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
-      - COGNITO_REGION=us-east-1
-      - SQS_QUEUE_URL=http://localstack:4566/000000000000/appointment-service-queue
-      - DJANGO_SETTINGS_MODULE=config.settings.local
+      - EVENTS_SQS_QUEUE_URL=http://localstack:4566/000000000000/appointment-service-queue
       - ALLOWED_HOSTS=*
+      - DJANGO_DB_HOST=postgres-appointment
+      - DJANGO_DB_NAME=appointment_db
+      - DJANGO_DB_USER=appointment_user
+      - DJANGO_DB_PASSWORD=appointment_pass
     depends_on:
       localstack:
+        condition: service_healthy
+      postgres-appointment:
         condition: service_healthy
     ports:
       - "8002:8000"
@@ -86,12 +120,16 @@ services:
       - AWS_SECRET_ACCESS_KEY=test
       - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
       - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
-      - COGNITO_REGION=us-east-1
-      - SQS_QUEUE_URL=http://localstack:4566/000000000000/schedule-service-queue
-      - DJANGO_SETTINGS_MODULE=config.settings.local
+      - EVENTS_SQS_QUEUE_URL=http://localstack:4566/000000000000/schedule-service-queue
       - ALLOWED_HOSTS=*
+      - DJANGO_DB_HOST=postgres-schedule
+      - DJANGO_DB_NAME=schedule_db
+      - DJANGO_DB_USER=schedule_user
+      - DJANGO_DB_PASSWORD=schedule_pass
     depends_on:
       localstack:
+        condition: service_healthy
+      postgres-schedule:
         condition: service_healthy
     ports:
       - "8003:8000"
@@ -106,14 +144,13 @@ services:
       - AWS_SECRET_ACCESS_KEY=test
       - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
       - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
-      - COGNITO_REGION=us-east-1
-      - SQS_QUEUE_URL=http://localstack:4566/000000000000/payment-service-queue
-      - DJANGO_SETTINGS_MODULE=config.settings.local
+      - AWS_SQS_PAYMENT_SUCCESS_QUEUE_URL=http://localstack:4566/000000000000/payment-success
+      - AWS_SQS_PAYMENT_FAILED_QUEUE_URL=http://localstack:4566/000000000000/payment-failed
       - ALLOWED_HOSTS=*
-      - DB_HOST=postgres-payment
-      - DB_NAME=payment_db
-      - DB_USER=payment_user
-      - DB_PASSWORD=payment_pass
+      - DJANGO_DB_HOST=postgres-payment
+      - DJANGO_DB_NAME=payment_db
+      - DJANGO_DB_USER=payment_user
+      - DJANGO_DB_PASSWORD=payment_pass
     depends_on:
       localstack:
         condition: service_healthy
@@ -132,9 +169,6 @@ services:
       - AWS_SECRET_ACCESS_KEY=test
       - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
       - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
-      - COGNITO_REGION=us-east-1
-      - SQS_QUEUE_URL=http://localstack:4566/000000000000/notification-service-queue
-      - DJANGO_SETTINGS_MODULE=config.settings.local
       - ALLOWED_HOSTS=*
     depends_on:
       localstack:
@@ -152,9 +186,6 @@ services:
       - AWS_SECRET_ACCESS_KEY=test
       - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
       - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
-      - COGNITO_REGION=us-east-1
-      - SQS_QUEUE_URL=http://localstack:4566/000000000000/facility-staff-service-queue
-      - DJANGO_SETTINGS_MODULE=config.settings.local
       - ALLOWED_HOSTS=*
     depends_on:
       localstack:
@@ -172,9 +203,6 @@ services:
       - AWS_SECRET_ACCESS_KEY=test
       - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
       - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
-      - COGNITO_REGION=us-east-1
-      - SQS_QUEUE_URL=http://localstack:4566/000000000000/medical-record-service-queue
-      - DJANGO_SETTINGS_MODULE=config.settings.local
       - ALLOWED_HOSTS=*
     depends_on:
       localstack:
@@ -192,9 +220,6 @@ services:
       - AWS_SECRET_ACCESS_KEY=test
       - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
       - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
-      - COGNITO_REGION=us-east-1
-      - SQS_QUEUE_URL=http://localstack:4566/000000000000/audit-service-queue
-      - DJANGO_SETTINGS_MODULE=config.settings.local
       - ALLOWED_HOSTS=*
     depends_on:
       localstack:
@@ -213,4 +238,6 @@ services:
       - notification-service
 
 volumes:
+  postgres-appointment-data:
+  postgres-schedule-data:
   postgres-payment-data:
