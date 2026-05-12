@@ -1,20 +1,12 @@
-# Integrated dev stack for appointment-service + schedule-service.
-#
-# Other services (auth, notification, frontend, payment, audit) are bare
-# scaffolds today and have been intentionally left out — wire them back in
-# once they have functioning Dockerfiles and code. To run them, copy a block
-# from a prior commit or add them via a Compose override file.
 services:
   localstack:
-    # Use the Pro image if LOCALSTACK_AUTH_TOKEN is set; otherwise the free
-    # image covers SNS+SQS (everything we need for appointment+schedule).
     image: ${LOCALSTACK_IMAGE:-localstack/localstack:latest}
     container_name: prod-localstack
     ports:
       - "127.0.0.1:4566:4566"
       - "127.0.0.1:4510-4559:4510-4559"
     environment:
-      - SERVICES=sqs,sns,iam,sts,logs
+      - SERVICES=apigateway,apigatewayv2,sqs,sns,s3,cognito-idp,iam,sts,logs,lambda,dynamodb,ecr,ecs,elbv2,rds,cloudwatch,events,ec2
       - DEBUG=1
       - AWS_DEFAULT_REGION=us-east-1
       - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN:-}
@@ -22,127 +14,30 @@ services:
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"
       - "./localstack-init:/etc/localstack/init/ready.d"
+      - "./localstack-data:/var/lib/localstack"
+    healthcheck:
+      # init/ready.d/ids.env is the last thing 00-bootstrap.sh writes — its presence means all resources exist.
+      test: ["CMD-SHELL", "test -f /etc/localstack/init/ready.d/ids.env"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+      start_period: 20s
 
-  appointment-db:
+  # Real Postgres for payment-service ECS tasks (LocalStack RDS emulation has no real connectivity).
+  postgres-payment:
     image: postgres:15-alpine
-    container_name: prod-appointment-db
+    container_name: prod-config-postgres-payment
     environment:
-      POSTGRES_DB: appointment_db
-      POSTGRES_USER: appointment_user
-      POSTGRES_PASSWORD: othersecretpassword
+      - POSTGRES_DB=payment_db
+      - POSTGRES_USER=payment_user
+      - POSTGRES_PASSWORD=payment_pass
     volumes:
-      - appointment-db-data:/var/lib/postgresql/data
-
-  appointment-service:
-    build:
-      context: ../appointment-service
-    container_name: prod-appointment-service
-    environment:
-      - DJANGO_SECRET_KEY=dev-not-secret-change-me
-      - DEBUG=True
-      - ALLOWED_HOSTS=*
-      - DJANGO_DB_HOST=appointment-db
-      - DJANGO_DB_PORT=5432
-      - DJANGO_DB_NAME=appointment_db
-      - DJANGO_DB_USER=appointment_user
-      - DJANGO_DB_PASSWORD=othersecretpassword
-      - AWS_ENDPOINT_URL=http://localstack:4566
-      - AWS_REGION=us-east-1
-      - APPOINTMENT_SNS_TOPIC_ARN=arn:aws:sns:us-east-1:000000000000:appointment-events
-      - EVENTS_SQS_QUEUE_URL=http://localstack:4566/000000000000/appointment-inbox
-      - SCHEDULE_SERVICE_URL=http://schedule-service:8000
-      - INTERNAL_SHARED_TOKEN=dev-internal-token
-      - SLOT_RESERVATION_TTL_MINUTES=10
-    depends_on:
-      - localstack
-      - appointment-db
-    ports:
-      - "8002:8000"
-
-  appointment-consumer:
-    build:
-      context: ../appointment-service
-    container_name: prod-appointment-consumer
-    command: ["python", "manage.py", "consume_events"]
-    environment:
-      - DJANGO_SECRET_KEY=dev-not-secret-change-me
-      - DEBUG=True
-      - ALLOWED_HOSTS=*
-      - DJANGO_DB_HOST=appointment-db
-      - DJANGO_DB_PORT=5432
-      - DJANGO_DB_NAME=appointment_db
-      - DJANGO_DB_USER=appointment_user
-      - DJANGO_DB_PASSWORD=othersecretpassword
-      - AWS_ENDPOINT_URL=http://localstack:4566
-      - AWS_REGION=us-east-1
-      - APPOINTMENT_SNS_TOPIC_ARN=arn:aws:sns:us-east-1:000000000000:appointment-events
-      - EVENTS_SQS_QUEUE_URL=http://localstack:4566/000000000000/appointment-inbox
-      - SCHEDULE_SERVICE_URL=http://schedule-service:8000
-      - INTERNAL_SHARED_TOKEN=dev-internal-token
-    depends_on:
-      - localstack
-      - appointment-db
-      - appointment-service
-
-  schedule-db:
-    image: postgres:15-alpine
-    container_name: prod-schedule-db
-    environment:
-      POSTGRES_DB: schedule_db
-      POSTGRES_USER: schedule_user
-      POSTGRES_PASSWORD: othersecretpassword
-    volumes:
-      - schedule-db-data:/var/lib/postgresql/data
-
-  schedule-service:
-    build:
-      context: ../schedule-service
-    container_name: prod-schedule-service
-    environment:
-      - DJANGO_SECRET_KEY=dev-not-secret-change-me
-      - DEBUG=True
-      - ALLOWED_HOSTS=*
-      - DJANGO_DB_HOST=schedule-db
-      - DJANGO_DB_PORT=5432
-      - DJANGO_DB_NAME=schedule_db
-      - DJANGO_DB_USER=schedule_user
-      - DJANGO_DB_PASSWORD=othersecretpassword
-      - AWS_ENDPOINT_URL=http://localstack:4566
-      - AWS_REGION=us-east-1
-      - SCHEDULE_SNS_TOPIC_ARN=arn:aws:sns:us-east-1:000000000000:schedule-events
-      - EVENTS_SQS_QUEUE_URL=http://localstack:4566/000000000000/schedule-inbox
-      - INTERNAL_SHARED_TOKEN=dev-internal-token
-      - SLOT_RESERVATION_TTL_MINUTES=10
-    depends_on:
-      - localstack
-      - schedule-db
-    ports:
-      - "8004:8000"
-
-  schedule-consumer:
-    build:
-      context: ../schedule-service
-    container_name: prod-schedule-consumer
-    command: ["python", "manage.py", "consume_events"]
-    environment:
-      - DJANGO_SECRET_KEY=dev-not-secret-change-me
-      - DEBUG=True
-      - ALLOWED_HOSTS=*
-      - DJANGO_DB_HOST=schedule-db
-      - DJANGO_DB_PORT=5432
-      - DJANGO_DB_NAME=schedule_db
-      - DJANGO_DB_USER=schedule_user
-      - DJANGO_DB_PASSWORD=othersecretpassword
-      - AWS_ENDPOINT_URL=http://localstack:4566
-      - AWS_REGION=us-east-1
-      - SCHEDULE_SNS_TOPIC_ARN=arn:aws:sns:us-east-1:000000000000:schedule-events
-      - EVENTS_SQS_QUEUE_URL=http://localstack:4566/000000000000/schedule-inbox
-      - INTERNAL_SHARED_TOKEN=dev-internal-token
-    depends_on:
-      - localstack
-      - schedule-db
-      - schedule-service
+      - postgres-payment-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payment_user -d payment_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
-  appointment-db-data:
-  schedule-db-data:
+  postgres-payment-data:

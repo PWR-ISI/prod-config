@@ -3,34 +3,39 @@ variable "project_name" {
   default = "prod-config"
 }
 
+variable "region" {
+  type    = string
+  default = "us-east-1"
+}
+
 variable "vpc_id" {
   type    = string
-  default = ""
+  default = "vpc-localstack"
 }
 
 variable "public_subnets" {
   type    = list(string)
-  default = []
+  default = ["subnet-public-1", "subnet-public-2"]
 }
 
 variable "private_subnets" {
   type    = list(string)
-  default = []
+  default = ["subnet-private-1", "subnet-private-2"]
 }
 
 variable "db_subnets" {
   type    = list(string)
-  default = []
+  default = ["subnet-db-1", "subnet-db-2"]
 }
 
 variable "ecs_security_group_id" {
   type    = string
-  default = ""
+  default = "sg-ecs-localstack"
 }
 
 variable "db_security_group_id" {
   type    = string
-  default = ""
+  default = "sg-db-localstack"
 }
 
 variable "db_username" {
@@ -42,4 +47,24 @@ variable "db_password" {
   type      = string
   sensitive = true
   default   = "appuser123"
+}
+
+variable "payu_merchant_id" {
+  type      = string
+  sensitive = true
+}
+
+variable "payu_api_key" {
+  type      = string
+  sensitive = true
+}
+
+variable "payu_oauth_client_id" {
+  type      = string
+  sensitive = true
+}
+
+variable "payu_oauth_client_secret" {
+  type      = string
+  sensitive = true
 }

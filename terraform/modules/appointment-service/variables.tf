@@ -1,14 +1,6 @@
-variable "project_name" {
-  type = string
-}
-
-variable "region" {
-  type = string
-}
-
-variable "vpc_id" {
-  type = string
-}
+variable "project_name" { type = string }
+variable "region" { type = string }
+variable "vpc_id" { type = string }
 
 variable "public_subnets" {
   type    = list(string)
@@ -46,3 +38,13 @@ variable "db_password" {
   default   = "appuser123"
 }
 
+
+variable "sqs_app_events_url" {
+  type    = string
+  default = ""
+}
+
+variable "cognito_user_pool_id" {
+  type    = string
+  default = ""
+}
