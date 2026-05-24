@@ -1,15 +1,25 @@
+# LocalStack: Emulates all AWS services (Cognito, RDS, DynamoDB, S3, SNS, SQS, etc.)
+# Applications connect to LocalStack endpoint: http://localhost:4566
+#
+# To use:
+# 1. Start LocalStack: docker-compose up -d
+# 2. Run applications locally or in separate containers
+# 3. All AWS service calls go through LocalStack on port 4566
+
 services:
   localstack:
     image: localstack/localstack-pro:latest
     container_name: prod-localstack
     ports:
-      - "127.0.0.1:4566:4566"
-      - "127.0.0.1:4510-4559:4510-4559"
+      - "127.0.0.1:4566:4566"        # All AWS services on single port
+      - "127.0.0.1:4510-4559:4510-4559" # Port range for emulated RDS/other services
     environment:
-      - SERVICES=apigateway,apigatewayv2,sqs,sns,s3,cognito-idp,iam,sts,logs,secretsmanager,ecr,ecs
-      - DEBUG=1
-      - AWS_DEFAULT_REGION=us-east-1
+      - LOCALSTACK_DOCKER_NAME=prod-localstack
       - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN}
+      # All AWS services to emulate
+      - SERVICES=apigateway,apigatewayv2,sqs,sns,s3,cognito-idp,iam,sts,logs,secretsmanager,ecr,ecs,rds,dynamodb,lambda,cloudwatch,kms,ec2,elbv2,autoscaling,application-autoscaling
+      - DEBUG=${DEBUG:-0}
+      - AWS_DEFAULT_REGION=${AWS_REGION:-us-east-1}
       - PERSISTENCE=1
       - DOCKER_HOST=unix:///var/run/docker.sock
     volumes:
@@ -22,222 +32,3 @@ services:
       timeout: 5s
       retries: 15
       start_period: 30s
-
-  postgres-appointment:
-    image: postgres:15-alpine
-    container_name: prod-config-postgres-appointment
-    environment:
-      - POSTGRES_DB=appointment_db
-      - POSTGRES_USER=appointment_user
-      - POSTGRES_PASSWORD=appointment_pass
-    volumes:
-      - postgres-appointment-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U appointment_user -d appointment_db"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  postgres-schedule:
-    image: postgres:15-alpine
-    container_name: prod-config-postgres-schedule
-    environment:
-      - POSTGRES_DB=schedule_db
-      - POSTGRES_USER=schedule_user
-      - POSTGRES_PASSWORD=schedule_pass
-    volumes:
-      - postgres-schedule-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U schedule_user -d schedule_db"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  postgres-payment:
-    image: postgres:15-alpine
-    container_name: prod-config-postgres-payment
-    environment:
-      - POSTGRES_DB=payment_db
-      - POSTGRES_USER=payment_user
-      - POSTGRES_PASSWORD=payment_pass
-    volumes:
-      - postgres-payment-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U payment_user -d payment_db"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  auth-identity-service:
-    build:
-      context: ./auth-identity-service
-    environment:
-      - AWS_ENDPOINT_URL=http://localstack:4566
-      - AWS_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
-      - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
-      - COGNITO_REGION=us-east-1
-      - ALLOWED_HOSTS=*
-    depends_on:
-      localstack:
-        condition: service_healthy
-    ports:
-      - "8001:8000"
-
-  appointment-service:
-    build:
-      context: ./appointment-service
-    environment:
-      - AWS_ENDPOINT_URL=http://localstack:4566
-      - AWS_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
-      - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
-      - EVENTS_SQS_QUEUE_URL=http://localstack:4566/000000000000/appointment-service-queue
-      - ALLOWED_HOSTS=*
-      - DJANGO_DB_HOST=postgres-appointment
-      - DJANGO_DB_NAME=appointment_db
-      - DJANGO_DB_USER=appointment_user
-      - DJANGO_DB_PASSWORD=appointment_pass
-    depends_on:
-      localstack:
-        condition: service_healthy
-      postgres-appointment:
-        condition: service_healthy
-    ports:
-      - "8002:8000"
-
-  schedule-service:
-    build:
-      context: ./schedule-service
-    environment:
-      - AWS_ENDPOINT_URL=http://localstack:4566
-      - AWS_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
-      - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
-      - EVENTS_SQS_QUEUE_URL=http://localstack:4566/000000000000/schedule-service-queue
-      - ALLOWED_HOSTS=*
-      - DJANGO_DB_HOST=postgres-schedule
-      - DJANGO_DB_NAME=schedule_db
-      - DJANGO_DB_USER=schedule_user
-      - DJANGO_DB_PASSWORD=schedule_pass
-    depends_on:
-      localstack:
-        condition: service_healthy
-      postgres-schedule:
-        condition: service_healthy
-    ports:
-      - "8003:8000"
-
-  payment-service:
-    build:
-      context: ./payment-service
-    environment:
-      - AWS_ENDPOINT_URL=http://localstack:4566
-      - AWS_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
-      - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
-      - AWS_SQS_PAYMENT_SUCCESS_QUEUE_URL=http://localstack:4566/000000000000/payment-success
-      - AWS_SQS_PAYMENT_FAILED_QUEUE_URL=http://localstack:4566/000000000000/payment-failed
-      - ALLOWED_HOSTS=*
-      - DJANGO_DB_HOST=postgres-payment
-      - DJANGO_DB_NAME=payment_db
-      - DJANGO_DB_USER=payment_user
-      - DJANGO_DB_PASSWORD=payment_pass
-    depends_on:
-      localstack:
-        condition: service_healthy
-      postgres-payment:
-        condition: service_healthy
-    ports:
-      - "8004:8000"
-
-  notification-service:
-    build:
-      context: ./notification-service
-    environment:
-      - AWS_ENDPOINT_URL=http://localstack:4566
-      - AWS_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
-      - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
-      - ALLOWED_HOSTS=*
-    depends_on:
-      localstack:
-        condition: service_healthy
-    ports:
-      - "8005:8000"
-
-  facility-staff-service:
-    build:
-      context: ./facility-staff-service
-    environment:
-      - AWS_ENDPOINT_URL=http://localstack:4566
-      - AWS_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
-      - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
-      - ALLOWED_HOSTS=*
-    depends_on:
-      localstack:
-        condition: service_healthy
-    ports:
-      - "8006:8000"
-
-  medical-record-service:
-    build:
-      context: ./medical-record-service
-    environment:
-      - AWS_ENDPOINT_URL=http://localstack:4566
-      - AWS_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
-      - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
-      - ALLOWED_HOSTS=*
-    depends_on:
-      localstack:
-        condition: service_healthy
-    ports:
-      - "8007:8000"
-
-  audit-logging-service:
-    build:
-      context: ./audit-logging-service
-    environment:
-      - AWS_ENDPOINT_URL=http://localstack:4566
-      - AWS_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
-      - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
-      - ALLOWED_HOSTS=*
-    depends_on:
-      localstack:
-        condition: service_healthy
-    ports:
-      - "8008:8000"
-
-  frontend-portal:
-    build:
-      context: ./frontend-portal
-    ports:
-      - "3000:80"
-    depends_on:
-      - auth-identity-service
-      - appointment-service
-      - notification-service
-
-volumes:
-  postgres-appointment-data:
-  postgres-schedule-data:
-  postgres-payment-data:

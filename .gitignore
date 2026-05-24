@@ -16,3 +16,21 @@ localstack-init/ids.env
 # Claude Code working directory
 .claude/
 
+# Build artifacts and deployment
+deploy/
+*.tar
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Node
+node_modules/
+dist/

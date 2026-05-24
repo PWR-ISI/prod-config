@@ -16,11 +16,79 @@ module "sqs" {
   project_name = var.project_name
 }
 
+module "auth_service" {
+  source    = "./modules/auth-identity-service"
+  providers = { aws = aws.localstack }
+
+  project_name          = var.project_name
+  region                = var.region
+  vpc_id                = module.network.vpc_id
+  public_subnets        = module.network.public_subnets
+  private_subnets       = module.network.private_subnets
+  db_subnets            = module.network.db_subnets
+  ecs_security_group_id = module.network.ecs_sg_id
+  db_security_group_id  = module.network.db_sg_id
+  db_username           = var.db_username
+  db_password           = var.db_password
+  cognito_user_pool_id  = module.cognito.user_pool_id
+}
+
 module "notification_service" {
   source       = "./modules/notification-service"
   providers    = { aws = aws.localstack }
   project_name = var.project_name
   region       = var.region
+}
+
+module "facility_service" {
+  source    = "./modules/facility-staff-service"
+  providers = { aws = aws.localstack }
+
+  project_name          = var.project_name
+  region                = var.region
+  vpc_id                = module.network.vpc_id
+  public_subnets        = module.network.public_subnets
+  private_subnets       = module.network.private_subnets
+  db_subnets            = module.network.db_subnets
+  ecs_security_group_id = module.network.ecs_sg_id
+  db_security_group_id  = module.network.db_sg_id
+  db_username           = var.db_username
+  db_password           = var.db_password
+  cognito_user_pool_id  = module.cognito.user_pool_id
+}
+
+module "medical_service" {
+  source    = "./modules/medical-record-service"
+  providers = { aws = aws.localstack }
+
+  project_name          = var.project_name
+  region                = var.region
+  vpc_id                = module.network.vpc_id
+  public_subnets        = module.network.public_subnets
+  private_subnets       = module.network.private_subnets
+  db_subnets            = module.network.db_subnets
+  ecs_security_group_id = module.network.ecs_sg_id
+  db_security_group_id  = module.network.db_sg_id
+  db_username           = var.db_username
+  db_password           = var.db_password
+  cognito_user_pool_id  = module.cognito.user_pool_id
+}
+
+module "audit_service" {
+  source    = "./modules/audit-logging-service"
+  providers = { aws = aws.localstack }
+
+  project_name          = var.project_name
+  region                = var.region
+  vpc_id                = module.network.vpc_id
+  public_subnets        = module.network.public_subnets
+  private_subnets       = module.network.private_subnets
+  db_subnets            = module.network.db_subnets
+  ecs_security_group_id = module.network.ecs_sg_id
+  db_security_group_id  = module.network.db_sg_id
+  db_username           = var.db_username
+  db_password           = var.db_password
+  cognito_user_pool_id  = module.cognito.user_pool_id
 }
 
 module "appointment_service" {
@@ -47,12 +115,12 @@ module "schedule_service" {
 
   project_name          = var.project_name
   region                = var.region
-  vpc_id                = var.vpc_id
-  public_subnets        = var.public_subnets
-  private_subnets       = var.private_subnets
-  db_subnets            = var.db_subnets
-  ecs_security_group_id = var.ecs_security_group_id
-  db_security_group_id  = var.db_security_group_id
+  vpc_id                = module.network.vpc_id
+  public_subnets        = module.network.public_subnets
+  private_subnets       = module.network.private_subnets
+  db_subnets            = module.network.db_subnets
+  ecs_security_group_id = module.network.ecs_sg_id
+  db_security_group_id  = module.network.db_sg_id
   db_username           = var.db_username
   db_password           = var.db_password
 }
@@ -86,15 +154,17 @@ module "api_gateway" {
   cognito_user_pool_id  = module.cognito.user_pool_id
   cognito_app_client_id = module.cognito.app_client_id
 
-  appointment_service_endpoint    = module.appointment_service.alb_dns
-  payment_service_endpoint        = module.payment_service.alb_dns
-  # remaining endpoints added here once those service modules exist
-  auth_service_endpoint           = var.auth_service_endpoint
-  schedule_service_endpoint       = var.schedule_service_endpoint
+  # LocalStack: Use host.docker.internal to reach host ports (API Gateway in Docker → host port forwards)
+  # AWS production: Use ALB DNS names (API Gateway → VPC Link → ALB → targets)
+  # For LocalStack testing, auth service is exposed on host port 64808
+  appointment_service_endpoint    = var.use_direct_service_routing ? "host.docker.internal" : module.appointment_service.alb_dns
+  payment_service_endpoint        = var.use_direct_service_routing ? "host.docker.internal" : module.payment_service.alb_dns
+  auth_service_endpoint           = var.use_direct_service_routing ? "host.docker.internal" : module.auth_service.alb_dns
+  schedule_service_endpoint       = var.use_direct_service_routing ? "host.docker.internal" : module.schedule_service.alb_dns
   notification_service_endpoint   = var.notification_service_endpoint
-  facility_staff_service_endpoint = var.facility_staff_service_endpoint
-  medical_record_service_endpoint = var.medical_record_service_endpoint
-  audit_service_endpoint          = var.audit_service_endpoint
+  facility_staff_service_endpoint = var.use_direct_service_routing ? "host.docker.internal" : module.facility_service.alb_dns
+  medical_record_service_endpoint = var.use_direct_service_routing ? "host.docker.internal" : module.medical_service.alb_dns
+  audit_service_endpoint          = var.use_direct_service_routing ? "host.docker.internal" : module.audit_service.alb_dns
 }
 
 module "frontend" {

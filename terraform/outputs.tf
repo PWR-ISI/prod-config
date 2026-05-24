@@ -1,15 +1,17 @@
-# ── API Gateway ────────────────────────────────────────────────────────────────
-output "api_gateway_endpoint" {
-  description = "Base URL of the AWS API Gateway (HTTP API v2)"
-  value       = module.api_gateway.api_endpoint
-}
-
-output "api_gateway_invoke_url" {
-  value = module.api_gateway.invoke_url
-}
-
+# ── API Gateway (HTTP API V2) ──────────────────────────────────────────────────
 output "api_gateway_id" {
-  value = module.api_gateway.api_id
+  description = "API Gateway HTTP API ID"
+  value       = module.api_gateway.api_gateway_id
+}
+
+output "api_gateway_endpoint" {
+  description = "API Gateway endpoint URL (HTTP for LocalStack)"
+  value       = module.api_gateway.api_gateway_endpoint
+}
+
+output "api_gateway_endpoint_https" {
+  description = "API Gateway endpoint URL (HTTPS for frontend)"
+  value       = replace(module.api_gateway.api_gateway_endpoint, "http://", "https://")
 }
 
 # ── Cognito ────────────────────────────────────────────────────────────────────
@@ -27,6 +29,11 @@ output "cognito_app_client_id" {
 output "sqs_queue_urls" {
   description = "SQS queue URLs keyed by service name"
   value       = module.sqs.queue_urls
+}
+
+# ── Auth service ──────────────────────────────────────────────────────────────
+output "auth_service_alb_dns" {
+  value = module.auth_service.alb_dns
 }
 
 # ── Appointment service ────────────────────────────────────────────────────────

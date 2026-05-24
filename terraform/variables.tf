@@ -115,3 +115,11 @@ variable "payu_oauth_client_secret" {
   sensitive = true
   default   = ""
 }
+
+# LocalStack routing mode
+# true = use direct target IPs (10.196.242.59:8000) - LocalStack workaround for API GW → ALB
+# false = use ALB DNS names (AWS production pattern with VPC Link)
+variable "use_direct_service_routing" {
+  type    = bool
+  default = true
+}

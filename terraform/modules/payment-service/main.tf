@@ -74,8 +74,8 @@ resource "aws_lb_target_group" "tg" {
   target_type = "ip"
 
   health_check {
-    path                = "/api/payments/health"
-    matcher             = "200"
+    path                = "/api/v2/payments/health/"
+    matcher             = "200-399"
     interval            = 30
     healthy_threshold   = 2
     unhealthy_threshold = 3
@@ -135,7 +135,7 @@ resource "aws_ecs_task_definition" "task" {
         { name = "AWS_ACCESS_KEY_ID",                 value = "test" },
         { name = "AWS_SECRET_ACCESS_KEY",             value = "test" },
         { name = "DJANGO_DB_HOST",                    value = var.db_host != "" ? var.db_host : aws_db_instance.payment.address },
-        { name = "DJANGO_DB_PORT",                    value = "5432" },
+        { name = "DJANGO_DB_PORT",                    value = tostring(aws_db_instance.payment.port) },
         { name = "DJANGO_DB_NAME",                    value = "payment_db" },
         { name = "DJANGO_DB_USER",                    value = var.db_username },
         { name = "DJANGO_DB_PASSWORD",                value = var.db_password },

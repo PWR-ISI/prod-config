@@ -76,7 +76,7 @@ resource "aws_lb_target_group" "tg" {
   target_type = "ip"
 
   health_check {
-    path                = "/healthz"
+    path                = "/api/v2/health/"
     matcher             = "200-399"
     interval            = 30
     healthy_threshold   = 2
@@ -114,7 +114,7 @@ resource "aws_ecs_task_definition" "task" {
         { name = "AWS_REGION", value = var.region },
         { name = "AWS_DEFAULT_REGION", value = var.region },
         { name = "DB_HOST", value = aws_db_instance.core.address },
-        { name = "DB_PORT", value = "5432" },
+        { name = "DB_PORT", value = tostring(aws_db_instance.core.port) },
         { name = "DB_NAME", value = "coredb" },
         { name = "DB_USER", value = var.db_username },
         { name = "DB_PASSWORD", value = var.db_password },
