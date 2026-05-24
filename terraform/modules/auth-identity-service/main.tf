@@ -4,7 +4,6 @@ locals {
 
 resource "aws_ecr_repository" "auth" {
   name = "${local.name}-repo"
-  count = 0
 
   image_scanning_configuration { scan_on_push = false }
   force_delete = true
@@ -114,12 +113,16 @@ resource "aws_ecs_task_definition" "task" {
       environment = [
         { name = "AWS_REGION", value = var.region },
         { name = "AWS_DEFAULT_REGION", value = var.region },
+        { name = "AWS_ENDPOINT_URL", value = "http://localstack:4566" },
+        { name = "DB_ENGINE", value = "postgresql" },
         { name = "DB_HOST", value = aws_db_instance.auth.address },
         { name = "DB_PORT", value = tostring(aws_db_instance.auth.port) },
         { name = "DB_NAME", value = "authdb" },
         { name = "DB_USER", value = var.db_username },
         { name = "DB_PASSWORD", value = var.db_password },
         { name = "COGNITO_USER_POOL_ID", value = var.cognito_user_pool_id },
+        { name = "COGNITO_USER_POOL_CLIENT_ID", value = var.cognito_app_client_id },
+        { name = "DEBUG", value = "False" },
       ]
       logConfiguration = {
         logDriver = "awslogs"

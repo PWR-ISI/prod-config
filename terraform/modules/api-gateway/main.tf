@@ -65,19 +65,19 @@ resource "aws_apigatewayv2_integration" "service" {
   integration_type   = "HTTP_PROXY"
   integration_method = "ANY"
 
-  # For LocalStack: uses host.docker.internal with service port (e.g., 8001, 8002, etc)
+  # For LocalStack: uses service endpoint (e.g., appointment-service:8000)
   # For AWS: endpoint is ALB DNS name on port 80
   integration_uri = "http://${each.value}:80"
 
   request_parameters = {
-    "overwrite:path" = "/api/v1$request.path"
+    "overwrite:path" = "/api/v1/${each.key}$request.path.proxy"
   }
 }
 
 resource "aws_apigatewayv2_route" "service" {
   for_each   = local.active_services
   api_id     = aws_apigatewayv2_api.medical.id
-  route_key  = "ANY /${each.key}/{proxy+}"
+  route_key  = "ANY /api/v2/${each.key}/{proxy+}"
   target     = "integrations/${aws_apigatewayv2_integration.service[each.key].id}"
 }
 
