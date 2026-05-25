@@ -2,8 +2,29 @@ locals {
   name = "${var.project_name}-schedule"
 }
 
+resource "terraform_data" "ecr_pre_delete" {
+  triggers_replace = { repo_name = "${local.name}-repo" }
+
+  provisioner "local-exec" {
+    interpreter = ["powershell", "-NoProfile", "-Command"]
+    environment = {
+      AWS_ACCESS_KEY_ID     = "test"
+      AWS_SECRET_ACCESS_KEY = "test"
+      AWS_DEFAULT_REGION    = var.region
+    }
+    command = "try { aws ecr delete-repository --repository-name ${local.name}-repo --force --endpoint-url http://localhost:4566 --region ${var.region} 2>$null } catch {}; exit 0"
+  }
+}
+
 resource "aws_ecr_repository" "schedule" {
-  name = "${local.name}-repo"
+  name         = "${local.name}-repo"
+  force_delete = true
+
+  depends_on = [terraform_data.ecr_pre_delete]
+
+  lifecycle {
+    ignore_changes = [image_scanning_configuration, image_tag_mutability]
+  }
 }
 
 resource "aws_ecs_cluster" "cluster" {
@@ -119,13 +140,17 @@ resource "aws_ecs_task_definition" "task" {
         { name = "DJANGO_DB_PORT", value = tostring(aws_db_instance.schedule.port) },
         { name = "DJANGO_DB_NAME", value = "scheduledb" },
         { name = "DJANGO_DB_USER", value = var.db_username },
-        { name = "DJANGO_DB_PASSWORD", value = var.db_password },
+        { name = "DJANGO_DB_PASSWORD", value = nonsensitive(var.db_password) },
         { name = "SCHEDULE_SNS_TOPIC_ARN", value = aws_sns_topic.schedule_events.arn },
         { name = "EVENTS_SQS_QUEUE_URL", value = aws_sqs_queue.schedule_inbox.url },
         { name = "ALLOWED_HOSTS", value = "*" },
       ]
     }
   ])
+
+  lifecycle {
+    ignore_changes = [container_definitions]
+  }
 }
 
 # ECS service
@@ -145,6 +170,10 @@ resource "aws_ecs_service" "service" {
     target_group_arn = aws_lb_target_group.tg.arn
     container_name   = "schedule"
     container_port   = 8000
+  }
+
+  lifecycle {
+    ignore_changes = [availability_zone_rebalancing]
   }
 }
 
@@ -181,14 +210,27 @@ resource "aws_db_subnet_group" "db_subnets" {
 resource "aws_db_instance" "schedule" {
   allocated_storage      = 20
   engine                 = "postgres"
-  engine_version         = "15"
+  engine_version         = "13.7"
   instance_class         = "db.t3.micro"
   db_name                = "scheduledb"
   username               = var.db_username
   password               = var.db_password
   skip_final_snapshot    = true
+  apply_immediately      = true
+  publicly_accessible    = false
   db_subnet_group_name   = aws_db_subnet_group.db_subnets.name
   vpc_security_group_ids = [var.db_security_group_id]
+
+  monitoring_interval          = 0
+  performance_insights_enabled = false
+  multi_az                     = false
+  storage_type                 = "gp2"
+
+  timeouts {
+    create = "20m"
+    update = "20m"
+    delete = "20m"
+  }
 }
 
 # Domain event topic and inbox queue

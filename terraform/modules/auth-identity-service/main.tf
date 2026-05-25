@@ -2,11 +2,40 @@ locals {
   name = "${var.project_name}-auth"
 }
 
+# LocalStack has PERSISTENCE=1, so an ECR repository created on a previous
+# apply (or by a stale bootstrap script) survives even after the local
+# terraform state is wiped. Without this pre-step, `terraform apply` fails
+# with RepositoryAlreadyExistsException. We hard-delete (force) whatever
+# happens to be there so the resource below can be re-created idempotently.
+resource "terraform_data" "ecr_pre_delete" {
+  triggers_replace = { repo_name = "${local.name}-repo" }
+
+  provisioner "local-exec" {
+    interpreter = ["powershell", "-NoProfile", "-Command"]
+    # Credentials must be set explicitly. When `terraform apply` runs in a
+    # shell that didn't export AWS_ACCESS_KEY_ID/SECRET, the AWS CLI inside
+    # the provisioner has no creds and silently fails — and the catch{} block
+    # makes that failure invisible. Set them here so the delete is reliable.
+    environment = {
+      AWS_ACCESS_KEY_ID     = "test"
+      AWS_SECRET_ACCESS_KEY = "test"
+      AWS_DEFAULT_REGION    = var.region
+    }
+    command = "try { aws ecr delete-repository --repository-name ${local.name}-repo --force --endpoint-url http://localhost:4566 --region ${var.region} 2>$null } catch {}; exit 0"
+  }
+}
+
 resource "aws_ecr_repository" "auth" {
   name = "${local.name}-repo"
 
   image_scanning_configuration { scan_on_push = false }
   force_delete = true
+
+  depends_on = [terraform_data.ecr_pre_delete]
+
+  lifecycle {
+    ignore_changes = [image_scanning_configuration, image_tag_mutability]
+  }
 }
 
 resource "aws_cloudwatch_log_group" "auth" {
@@ -119,7 +148,7 @@ resource "aws_ecs_task_definition" "task" {
         { name = "DB_PORT", value = tostring(aws_db_instance.auth.port) },
         { name = "DB_NAME", value = "authdb" },
         { name = "DB_USER", value = var.db_username },
-        { name = "DB_PASSWORD", value = var.db_password },
+        { name = "DB_PASSWORD", value = nonsensitive(var.db_password) },
         { name = "COGNITO_USER_POOL_ID", value = var.cognito_user_pool_id },
         { name = "COGNITO_USER_POOL_CLIENT_ID", value = var.cognito_app_client_id },
         { name = "DEBUG", value = "False" },
@@ -134,6 +163,15 @@ resource "aws_ecs_task_definition" "task" {
       }
     }
   ])
+
+  # AWS provider bug: when container_definitions embed a sensitive value
+  # (db_password) and any referenced input changes, the plan-vs-state diff
+  # for the sensitive attribute is reported as "inconsistent final plan".
+  # In production, secrets belong in Secrets Manager via the `secrets` block;
+  # for LocalStack we ignore in-place updates to avoid spurious failures.
+  lifecycle {
+    ignore_changes = [container_definitions]
+  }
 }
 
 resource "aws_ecs_service" "service" {
@@ -156,6 +194,12 @@ resource "aws_ecs_service" "service" {
   }
 
   depends_on = [aws_lb_listener.http]
+
+  # LocalStack doesn't persist this attribute; AWS provider re-adds it on every
+  # plan, producing churn without functional effect.
+  lifecycle {
+    ignore_changes = [availability_zone_rebalancing]
+  }
 }
 
 resource "aws_appautoscaling_target" "ecs_target" {
@@ -187,16 +231,35 @@ resource "aws_db_subnet_group" "db_subnets" {
 }
 
 resource "aws_db_instance" "auth" {
+  # LocalStack Pro spins a real Postgres container per RDS instance. A bare
+  # "15" engine_version isn't resolved to a concrete image tag, which leaves
+  # the instance stuck in state 'error'. Pin to a fully-qualified version
+  # LocalStack ships with. Production RDS accepts this too.
   allocated_storage      = 20
   engine                 = "postgres"
-  engine_version         = "15"
+  engine_version         = "13.7"
   instance_class         = "db.t3.micro"
   db_name                = "authdb"
   username               = var.db_username
   password               = var.db_password
   skip_final_snapshot    = true
+  apply_immediately      = true
+  publicly_accessible    = false
   db_subnet_group_name   = aws_db_subnet_group.db_subnets.name
   vpc_security_group_ids = [var.db_security_group_id]
+
+  # Defaults that AWS computes server-side but LocalStack mis-handles. Being
+  # explicit avoids spurious "configuration invalid" → state 'error' loops.
+  monitoring_interval          = 0
+  performance_insights_enabled = false
+  multi_az                     = false
+  storage_type                 = "gp2"
+
+  timeouts {
+    create = "20m"
+    update = "20m"
+    delete = "20m"
+  }
 }
 
 resource "aws_sns_topic" "auth_events" {

@@ -118,7 +118,7 @@ resource "aws_ecs_task_definition" "task" {
         { name = "DB_PORT", value = tostring(aws_db_instance.medical.port) },
         { name = "DB_NAME", value = "medicaldb" },
         { name = "DB_USER", value = var.db_username },
-        { name = "DB_PASSWORD", value = var.db_password },
+        { name = "DB_PASSWORD", value = nonsensitive(var.db_password) },
         { name = "COGNITO_USER_POOL_ID", value = var.cognito_user_pool_id },
       ]
       logConfiguration = {
@@ -131,6 +131,10 @@ resource "aws_ecs_task_definition" "task" {
       }
     }
   ])
+
+  lifecycle {
+    ignore_changes = [container_definitions]
+  }
 }
 
 resource "aws_ecs_service" "service" {
@@ -153,6 +157,10 @@ resource "aws_ecs_service" "service" {
   }
 
   depends_on = [aws_lb_listener.http]
+
+  lifecycle {
+    ignore_changes = [availability_zone_rebalancing]
+  }
 }
 
 resource "aws_appautoscaling_target" "ecs_target" {
@@ -186,14 +194,27 @@ resource "aws_db_subnet_group" "db_subnets" {
 resource "aws_db_instance" "medical" {
   allocated_storage      = 20
   engine                 = "postgres"
-  engine_version         = "15"
+  engine_version         = "13.7"
   instance_class         = "db.t3.micro"
   db_name                = "medicaldb"
   username               = var.db_username
   password               = var.db_password
   skip_final_snapshot    = true
+  apply_immediately      = true
+  publicly_accessible    = false
   db_subnet_group_name   = aws_db_subnet_group.db_subnets.name
   vpc_security_group_ids = [var.db_security_group_id]
+
+  monitoring_interval          = 0
+  performance_insights_enabled = false
+  multi_az                     = false
+  storage_type                 = "gp2"
+
+  timeouts {
+    create = "20m"
+    update = "20m"
+    delete = "20m"
+  }
 }
 
 resource "aws_sns_topic" "medical_events" {

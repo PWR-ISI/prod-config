@@ -53,10 +53,11 @@ awslocal cognito-idp admin-set-user-password \
   --password Test1234 \
   --permanent >/dev/null
 
-echo "[bootstrap] creating ECR repositories (for terraform-driven Fargate deploys)..."
-for repo in prod-config-auth-repo prod-config-core-repo prod-config-notification-repo; do
-  awslocal ecr create-repository --repository-name "$repo" >/dev/null 2>&1 || true
-done
+# ECR repositories are owned by Terraform (modules: auth, appointment/core,
+# payment, schedule). Creating them here caused RepositoryAlreadyExistsException
+# during `terraform apply`, because the bootstrap pre-seeded names that
+# Terraform was about to create. Leave the registry empty here; `terraform
+# apply` will create the repositories under its own state.
 
 echo "[bootstrap] writing IDs to $IDS_FILE..."
 cat >"$IDS_FILE" <<EOF
