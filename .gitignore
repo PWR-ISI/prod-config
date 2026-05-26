@@ -30,6 +30,11 @@ Thumbs.db
 *.tfstate.*
 .terraform/
 .terraform.lock.hcl
+terraform/tfplan
+tfplan
+
+# Django (stray test artifacts that land here when manage.py runs from this dir)
+db.sqlite3
 
 # Node
 node_modules/

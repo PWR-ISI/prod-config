@@ -191,7 +191,13 @@ function Reset-FullState {
     Write-Status "RESET: full LocalStack + Terraform state wipe" "WARN"
 
     # Stop and remove LocalStack container so the volume is unlocked.
-    docker compose down 2>$null | Out-Null
+    # IMPORTANT: don't redirect stderr (`2>$null`, `2>&1`, `*>&1`). Docker
+    # writes its progress lines ("Container Stopping", "Removing") to stderr,
+    # and Windows PowerShell 5.1 wraps every stderr line on a native command
+    # as a NativeCommandError — which `$ErrorActionPreference="Stop"` (set at
+    # the top of this script) then turns into a fatal terminating exception.
+    # Letting docker print directly is the simplest reliable approach.
+    docker compose down
 
     # Volume wipe: the SSL PEM bug in LocalStack postgres-proxy comes from a
     # corrupted CA cert at cache/certs/ca/ — removing the whole volume forces

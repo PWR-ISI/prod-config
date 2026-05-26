@@ -39,6 +39,13 @@ module "notification_service" {
   providers    = { aws = aws.localstack }
   project_name = var.project_name
   region       = var.region
+
+  # Google Calendar OAuth2 (Priority 2). Defaults are empty — set via
+  # TF_VAR_google_oauth_* in the deploy shell to activate.
+  google_oauth_client_id      = var.google_oauth_client_id
+  google_oauth_client_secret  = var.google_oauth_client_secret
+  google_oauth_redirect_uri   = var.google_oauth_redirect_uri
+  google_token_encryption_key = var.google_token_encryption_key
 }
 
 module "facility_service" {

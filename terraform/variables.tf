@@ -123,3 +123,30 @@ variable "use_direct_service_routing" {
   type    = bool
   default = true
 }
+
+# ── Google Calendar (notification-service) ────────────────────────────────────
+# Set via TF_VAR_google_oauth_client_id etc. in the shell, sourced from .env or
+# AWS Secrets Manager in prod. Default empty means the integration is dormant —
+# the OAuth endpoints return 503 and the consumer skips Google inserts.
+variable "google_oauth_client_id" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "google_oauth_client_secret" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "google_oauth_redirect_uri" {
+  type    = string
+  default = "http://localhost:8003/api/v2/google/callback/"
+}
+
+variable "google_token_encryption_key" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
