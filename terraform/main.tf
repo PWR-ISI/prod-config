@@ -166,7 +166,7 @@ module "api_gateway" {
   region                = var.region
   cognito_user_pool_id  = module.cognito.user_pool_id
   cognito_app_client_id = module.cognito.app_client_id
-  use_direct_service_routing = var.use_direct_service_routing
+  use_direct_service_routing = false
 
   # For both LocalStack and AWS: Use ALB DNS names (API Gateway → ALB → ECS targets)
   # ALB listens on port 80 and forwards to port 8000 on ECS tasks

@@ -53,10 +53,22 @@ resource "aws_s3_bucket_policy" "frontend" {
   })
 }
 
+resource "aws_s3_bucket_cors_configuration" "frontend" {
+  bucket = aws_s3_bucket.frontend.id
+
+  cors_rule {
+    allowed_headers = ["*"]
+    allowed_methods = ["GET", "HEAD", "PUT", "POST", "DELETE"]
+    allowed_origins = ["*"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
+  }
+}
+
 output "bucket" {
   value = aws_s3_bucket.frontend.id
 }
 
 output "website_endpoint" {
-  value = aws_s3_bucket_website_configuration.frontend.website_endpoint
+  value = "http://${aws_s3_bucket.frontend.id}.s3-website.localhost.localstack.cloud:4566"
 }

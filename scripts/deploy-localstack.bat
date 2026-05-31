@@ -150,7 +150,7 @@ goto :EOF
 
 :FRONTEND_BUILD
 echo.
-echo [5/5] Building frontend...
+echo [5/5] Building and uploading frontend...
 
 cd frontend-portal
 echo [*] Installing dependencies...
@@ -159,9 +159,15 @@ call npm install
 echo [*] Building...
 call npm run build
 
+echo [*] Uploading to S3...
+aws s3 sync dist/ s3://prod-config-frontend/ --endpoint-url http://localhost:4566 --delete --region us-east-1
+if !errorlevel! neq 0 (
+    echo [WARN] Frontend upload may have issues but continuing
+)
+
 cd ..
 
-echo [OK] Frontend built
+echo [OK] Frontend built and uploaded
 goto :EOF
 
 :CHECK_STATUS

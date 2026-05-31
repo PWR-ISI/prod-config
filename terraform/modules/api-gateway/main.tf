@@ -6,10 +6,11 @@ resource "aws_apigatewayv2_api" "medical" {
 
   cors_configuration {
     allow_origins     = ["*"]
-    allow_methods     = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
-    allow_headers     = ["*"]
-    expose_headers    = ["*"]
+    allow_methods     = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"]
+    allow_headers     = ["content-type", "authorization", "x-amz-date", "x-api-key", "x-amz-security-token"]
+    expose_headers    = ["content-type", "x-amzn-requestid"]
     max_age           = 300
+    allow_credentials = false
   }
 
   tags = {
@@ -21,7 +22,6 @@ resource "aws_apigatewayv2_api" "medical" {
 # For LocalStack: access through localhost on exposed port
 # For AWS: endpoint is ALB DNS name on port 80, routed via VPC Link
 resource "aws_apigatewayv2_integration" "auth" {
-  count              = var.auth_service_endpoint != "" ? 1 : 0
   api_id             = aws_apigatewayv2_api.medical.id
   integration_type   = "HTTP_PROXY"
   integration_method = "ANY"
@@ -36,10 +36,9 @@ resource "aws_apigatewayv2_integration" "auth" {
 }
 
 resource "aws_apigatewayv2_route" "auth" {
-  count     = var.auth_service_endpoint != "" ? 1 : 0
   api_id    = aws_apigatewayv2_api.medical.id
   route_key = "ANY /api/v2/auth/{proxy+}"
-  target    = "integrations/${aws_apigatewayv2_integration.auth[0].id}"
+  target    = "integrations/${aws_apigatewayv2_integration.auth.id}"
 }
 
 # ── Services Integrations ────────────────────────────────────────────────────
@@ -54,19 +53,16 @@ locals {
     audit         = var.audit_service_endpoint
   }
 
-  active_services = {
-    for k, v in local.services : k => v if v != ""
-  }
 }
 
 resource "aws_apigatewayv2_integration" "service" {
-  for_each           = local.active_services
+  for_each           = local.services
   api_id             = aws_apigatewayv2_api.medical.id
   integration_type   = "HTTP_PROXY"
   integration_method = "ANY"
 
   # Use ALB endpoints on port 80 (ALB forwards to port 8000 on ECS tasks)
-  integration_uri = "http://${each.value}:80"
+  integration_uri = each.value != "" ? "http://${each.value}:80" : "http://localhost:8000"
 
   request_parameters = {
     "overwrite:path" = "/api/v1/${each.key}$request.path.proxy"
@@ -74,7 +70,7 @@ resource "aws_apigatewayv2_integration" "service" {
 }
 
 resource "aws_apigatewayv2_route" "service" {
-  for_each   = local.active_services
+  for_each   = local.services
   api_id     = aws_apigatewayv2_api.medical.id
   route_key  = "ANY /api/v2/${each.key}/{proxy+}"
   target     = "integrations/${aws_apigatewayv2_integration.service[each.key].id}"
