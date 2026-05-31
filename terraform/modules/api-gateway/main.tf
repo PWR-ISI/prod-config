@@ -18,7 +18,7 @@ resource "aws_apigatewayv2_api" "medical" {
 }
 
 # ── Auth Service Integration ─────────────────────────────────────────────────
-# For LocalStack: uses host.docker.internal:64808 (port forward from host)
+# For LocalStack: access through localhost on exposed port
 # For AWS: endpoint is ALB DNS name on port 80, routed via VPC Link
 resource "aws_apigatewayv2_integration" "auth" {
   count              = var.auth_service_endpoint != "" ? 1 : 0
@@ -26,7 +26,7 @@ resource "aws_apigatewayv2_integration" "auth" {
   integration_type   = "HTTP_PROXY"
   integration_method = "ANY"
 
-  integration_uri = "http://${var.auth_service_endpoint}:${var.auth_service_endpoint == "host.docker.internal" ? "64808" : "80"}"
+  integration_uri = var.use_direct_service_routing ? "http://172.18.0.3:8000" : "http://${var.auth_service_endpoint}:80"
 
   request_parameters = {
     "overwrite:path" = "/api/v2/auth/$request.path.proxy"
@@ -65,8 +65,7 @@ resource "aws_apigatewayv2_integration" "service" {
   integration_type   = "HTTP_PROXY"
   integration_method = "ANY"
 
-  # For LocalStack: uses service endpoint (e.g., appointment-service:8000)
-  # For AWS: endpoint is ALB DNS name on port 80
+  # Use ALB endpoints on port 80 (ALB forwards to port 8000 on ECS tasks)
   integration_uri = "http://${each.value}:80"
 
   request_parameters = {

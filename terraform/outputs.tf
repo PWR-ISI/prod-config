@@ -67,10 +67,25 @@ output "payment_ecs_service" {
 }
 
 # ── Notification service ───────────────────────────────────────────────────────
+output "notification_service_alb_dns" {
+  value = module.notification_service.alb_dns
+}
+
 output "notification_sns_topic_arn" {
   value = module.notification_service.sns_topic_arn
 }
 
 output "notification_sqs_app_events_url" {
   value = module.notification_service.sqs_app_events_url
+}
+
+# ── Frontend ───────────────────────────────────────────────────────────────────
+output "frontend_bucket" {
+  description = "Frontend S3 bucket name"
+  value       = module.frontend.bucket
+}
+
+output "frontend_website_endpoint" {
+  description = "Frontend S3 website endpoint URL"
+  value       = module.frontend.website_endpoint
 }

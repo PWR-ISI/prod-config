@@ -33,12 +33,19 @@ set AWS_DEFAULT_REGION=us-east-1
 
 cd terraform
 
+REM Clean .terraform in case of corruption
+if exist .terraform (
+    echo Cleaning corrupted .terraform directory...
+    rmdir /s /q .terraform
+)
+
 echo Initializing Terraform...
 call terraform init
 
 if errorlevel 1 (
     echo ERROR: Terraform init failed
     pause
+    cd ..
     exit /b 1
 )
 
@@ -73,4 +80,5 @@ if "!ACTION!"=="plan" (
 )
 
 echo.
+cd ..
 pause

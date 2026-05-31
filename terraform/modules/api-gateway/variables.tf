@@ -46,3 +46,8 @@ variable "medical_record_service_endpoint" {
 variable "audit_service_endpoint" {
   type = string
 }
+
+variable "use_direct_service_routing" {
+  type    = bool
+  default = true
+}

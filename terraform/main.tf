@@ -35,10 +35,15 @@ module "auth_service" {
 }
 
 module "notification_service" {
-  source       = "./modules/notification-service"
-  providers    = { aws = aws.localstack }
-  project_name = var.project_name
-  region       = var.region
+  source    = "./modules/notification-service"
+  providers = { aws = aws.localstack }
+
+  project_name          = var.project_name
+  region                = var.region
+  vpc_id                = module.network.vpc_id
+  public_subnets        = module.network.public_subnets
+  private_subnets       = module.network.private_subnets
+  ecs_security_group_id = module.network.ecs_sg_id
 
   # Google Calendar OAuth2 (Priority 2). Defaults are empty — set via
   # TF_VAR_google_oauth_* in the deploy shell to activate.
@@ -161,18 +166,18 @@ module "api_gateway" {
   region                = var.region
   cognito_user_pool_id  = module.cognito.user_pool_id
   cognito_app_client_id = module.cognito.app_client_id
+  use_direct_service_routing = var.use_direct_service_routing
 
-  # LocalStack: Use host.docker.internal to reach host ports (API Gateway in Docker → host port forwards)
-  # AWS production: Use ALB DNS names (API Gateway → VPC Link → ALB → targets)
-  # For LocalStack testing, auth service is exposed on host port 64808
-  appointment_service_endpoint    = var.use_direct_service_routing ? "host.docker.internal" : module.appointment_service.alb_dns
-  payment_service_endpoint        = var.use_direct_service_routing ? "host.docker.internal" : module.payment_service.alb_dns
-  auth_service_endpoint           = var.use_direct_service_routing ? "host.docker.internal" : module.auth_service.alb_dns
-  schedule_service_endpoint       = var.use_direct_service_routing ? "host.docker.internal" : module.schedule_service.alb_dns
-  notification_service_endpoint   = var.notification_service_endpoint
-  facility_staff_service_endpoint = var.use_direct_service_routing ? "host.docker.internal" : module.facility_service.alb_dns
-  medical_record_service_endpoint = var.use_direct_service_routing ? "host.docker.internal" : module.medical_service.alb_dns
-  audit_service_endpoint          = var.use_direct_service_routing ? "host.docker.internal" : module.audit_service.alb_dns
+  # For both LocalStack and AWS: Use ALB DNS names (API Gateway → ALB → ECS targets)
+  # ALB listens on port 80 and forwards to port 8000 on ECS tasks
+  appointment_service_endpoint    = module.appointment_service.alb_dns
+  payment_service_endpoint        = module.payment_service.alb_dns
+  auth_service_endpoint           = module.auth_service.alb_dns
+  schedule_service_endpoint       = module.schedule_service.alb_dns
+  notification_service_endpoint   = module.notification_service.alb_dns
+  facility_staff_service_endpoint = module.facility_service.alb_dns
+  medical_record_service_endpoint = module.medical_service.alb_dns
+  audit_service_endpoint          = module.audit_service.alb_dns
 }
 
 module "frontend" {
