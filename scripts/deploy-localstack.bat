@@ -160,7 +160,7 @@ echo [*] Building...
 call npm run build
 
 echo [*] Uploading to S3...
-aws s3 sync dist/ s3://prod-config-frontend/ --endpoint-url http://localhost:4566 --delete --region us-east-1
+aws s3 sync dist/ s3://isi-prod-frontend/ --endpoint-url http://localhost:4566 --delete --region us-east-1
 if !errorlevel! neq 0 (
     echo [WARN] Frontend upload may have issues but continuing
 )

@@ -362,7 +362,7 @@ function Deploy-Frontend {
     $bucket = "isi-prod-frontend"
 
     aws s3 mb "s3://$bucket" --endpoint-url $env:AWS_ENDPOINT_URL 2>$null
-    aws s3 sync dist "s3://$bucket" --endpoint-url $env:AWS_ENDPOINT_URL
+    aws s3 sync dist "s3://$bucket" --delete --endpoint-url $env:AWS_ENDPOINT_URL
 
     Write-Status "[OK]Frontend deployed" "INFO"
 
