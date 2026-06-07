@@ -8,7 +8,7 @@ variable "project_name" { type = string }
 variable "region" { type = string }
 
 resource "aws_s3_bucket" "frontend" {
-  bucket = "${var.project_name}-frontend"
+  bucket = "${var.project_name}-frontend-${var.region}"
 }
 
 resource "aws_s3_bucket_ownership_controls" "frontend" {
@@ -42,6 +42,7 @@ resource "aws_s3_bucket_website_configuration" "frontend" {
 
 resource "aws_s3_bucket_policy" "frontend" {
   bucket = aws_s3_bucket.frontend.id
+  depends_on = [aws_s3_bucket_public_access_block.frontend]
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -70,5 +71,5 @@ output "bucket" {
 }
 
 output "website_endpoint" {
-  value = "http://${aws_s3_bucket.frontend.id}.s3-website.localhost.localstack.cloud:4566"
+  value = "http://${aws_s3_bucket.frontend.id}.s3-website-${var.region}.amazonaws.com"
 }

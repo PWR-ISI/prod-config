@@ -27,6 +27,10 @@ variable "schedule_service_endpoint" {
   type = string
 }
 
+variable "file_upload_service_endpoint" {
+  type = string
+}
+
 variable "payment_service_endpoint" {
   type = string
 }

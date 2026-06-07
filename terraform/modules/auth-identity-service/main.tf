@@ -2,33 +2,22 @@ locals {
   name = "${var.project_name}-auth"
 }
 
-# LocalStack has PERSISTENCE=1, so an ECR repository created on a previous
-# apply (or by a stale bootstrap script) survives even after the local
-# terraform state is wiped. Without this pre-step, `terraform apply` fails
-# with RepositoryAlreadyExistsException. We hard-delete (force) whatever
-# happens to be there so the resource below can be re-created idempotently.
 resource "terraform_data" "ecr_pre_delete" {
   triggers_replace = { repo_name = "${local.name}-repo" }
 
   provisioner "local-exec" {
     interpreter = ["powershell", "-NoProfile", "-Command"]
-    # Credentials must be set explicitly. When `terraform apply` runs in a
-    # shell that didn't export AWS_ACCESS_KEY_ID/SECRET, the AWS CLI inside
-    # the provisioner has no creds and silently fails — and the catch{} block
-    # makes that failure invisible. Set them here so the delete is reliable.
     environment = {
       AWS_ACCESS_KEY_ID     = "test"
       AWS_SECRET_ACCESS_KEY = "test"
       AWS_DEFAULT_REGION    = var.region
     }
-    command = "try { aws ecr delete-repository --repository-name ${local.name}-repo --force --endpoint-url http://localhost:4566 --region ${var.region} 2>$null } catch {}; exit 0"
+    command = "try { aws ecr delete-repository --repository-name ${local.name}-repo --force  --region ${var.region} 2>$null } catch {}; exit 0"
   }
 }
 
 resource "aws_ecr_repository" "auth" {
-  name = "${local.name}-repo"
-
-  image_scanning_configuration { scan_on_push = false }
+  name         = "${local.name}-repo"
   force_delete = true
 
   depends_on = [terraform_data.ecr_pre_delete]
@@ -38,15 +27,11 @@ resource "aws_ecr_repository" "auth" {
   }
 }
 
-resource "aws_cloudwatch_log_group" "auth" {
-  name              = "/ecs/${local.name}"
-  retention_in_days = 7
-}
-
 resource "aws_ecs_cluster" "cluster" {
   name = "${local.name}-cluster"
 }
 
+# IAM role for task execution
 resource "aws_iam_role" "task_exec_role" {
   name               = "${local.name}-task-exec"
   assume_role_policy = data.aws_iam_policy_document.ecs_task_assume_role.json
@@ -67,34 +52,42 @@ resource "aws_iam_role_policy_attachment" "exec_attach" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# Task role grants the running container access to SNS publish + SQS read.
 resource "aws_iam_role" "task_role" {
   name               = "${local.name}-task"
   assume_role_policy = data.aws_iam_policy_document.ecs_task_assume_role.json
 }
 
-resource "aws_iam_role_policy" "task_role_policy" {
-  role = aws_iam_role.task_role.name
+resource "aws_iam_role_policy" "task_role_sns_sqs" {
+  role = aws_iam_role.task_role.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "sqs:SendMessage", "sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes",
-        "sns:Publish",
-        "cognito-idp:*",
-        "logs:CreateLogStream", "logs:PutLogEvents"
-      ]
-      Resource = "*"
-    }]
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["sns:Publish"]
+        Resource = aws_sns_topic.auth_events.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:GetQueueUrl",
+        ]
+        Resource = aws_sqs_queue.auth_inbox.arn
+      },
+    ]
   })
 }
 
+# ALB
 resource "aws_lb" "alb" {
   name               = "${local.name}-alb"
   internal           = false
   load_balancer_type = "application"
   subnets            = var.public_subnets
-  security_groups    = [var.ecs_security_group_id]
 }
 
 resource "aws_lb_target_group" "tg" {
@@ -105,11 +98,12 @@ resource "aws_lb_target_group" "tg" {
   target_type = "ip"
 
   health_check {
-    path                = "/api/v2/health/"
-    matcher             = "200-399"
-    interval            = 30
+    path                = "/"
+    matcher             = "200-499"
+    interval            = 60
+    timeout             = 10
     healthy_threshold   = 2
-    unhealthy_threshold = 3
+    unhealthy_threshold = 10
   }
 }
 
@@ -124,6 +118,7 @@ resource "aws_lb_listener" "http" {
   }
 }
 
+# Task definition
 resource "aws_ecs_task_definition" "task" {
   family                   = "${local.name}-task"
   network_mode             = "awsvpc"
@@ -135,45 +130,30 @@ resource "aws_ecs_task_definition" "task" {
 
   container_definitions = jsonencode([
     {
-      name         = "auth"
-      image        = "000000000000.dkr.ecr.${var.region}.localhost.localstack.cloud:4566/${local.name}:latest"
-      essential    = true
-      portMappings = [{ containerPort = 8000, hostPort = 8000, protocol = "tcp" }]
+      name      = "auth"
+      image     = "${aws_ecr_repository.auth.repository_url}:latest"
+      essential = true
+      portMappings = [{ containerPort = 8000, hostPort = 8000 }]
       environment = [
         { name = "AWS_REGION", value = var.region },
-        { name = "AWS_DEFAULT_REGION", value = var.region },
-        { name = "AWS_ENDPOINT_URL", value = "http://localstack:4566" },
-        { name = "DB_ENGINE", value = "postgresql" },
-        { name = "DB_HOST", value = aws_db_instance.auth.address },
-        { name = "DB_PORT", value = tostring(aws_db_instance.auth.port) },
-        { name = "DB_NAME", value = "authdb" },
-        { name = "DB_USER", value = var.db_username },
-        { name = "DB_PASSWORD", value = nonsensitive(var.db_password) },
-        { name = "COGNITO_USER_POOL_ID", value = var.cognito_user_pool_id },
-        { name = "COGNITO_USER_POOL_CLIENT_ID", value = var.cognito_app_client_id },
-        { name = "DEBUG", value = "False" },
+        { name = "DJANGO_DB_HOST", value = aws_db_instance.auth.address },
+        { name = "DJANGO_DB_PORT", value = tostring(aws_db_instance.auth.port) },
+        { name = "DJANGO_DB_NAME", value = "authdb" },
+        { name = "DJANGO_DB_USER", value = var.db_username },
+        { name = "DJANGO_DB_PASSWORD", value = nonsensitive(var.db_password) },
+        { name = "AUTH_SNS_TOPIC_ARN", value = aws_sns_topic.auth_events.arn },
+        { name = "EVENTS_SQS_QUEUE_URL", value = aws_sqs_queue.auth_inbox.url },
+        { name = "ALLOWED_HOSTS", value = "*" },
       ]
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          awslogs-group         = aws_cloudwatch_log_group.auth.name
-          awslogs-region        = var.region
-          awslogs-stream-prefix = "auth"
-        }
-      }
     }
   ])
 
-  # AWS provider bug: when container_definitions embed a sensitive value
-  # (db_password) and any referenced input changes, the plan-vs-state diff
-  # for the sensitive attribute is reported as "inconsistent final plan".
-  # In production, secrets belong in Secrets Manager via the `secrets` block;
-  # for LocalStack we ignore in-place updates to avoid spurious failures.
   lifecycle {
     ignore_changes = [container_definitions]
   }
 }
 
+# ECS service
 resource "aws_ecs_service" "service" {
   name            = "${local.name}-svc"
   cluster         = aws_ecs_cluster.cluster.id
@@ -182,9 +162,8 @@ resource "aws_ecs_service" "service" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = var.private_subnets
-    security_groups  = [var.ecs_security_group_id]
-    assign_public_ip = true
+    subnets         = var.private_subnets
+    security_groups = [var.ecs_security_group_id]
   }
 
   load_balancer {
@@ -193,15 +172,12 @@ resource "aws_ecs_service" "service" {
     container_port   = 8000
   }
 
-  depends_on = [aws_lb_listener.http]
-
-  # LocalStack doesn't persist this attribute; AWS provider re-adds it on every
-  # plan, producing churn without functional effect.
   lifecycle {
     ignore_changes = [availability_zone_rebalancing]
   }
 }
 
+# Autoscaling
 resource "aws_appautoscaling_target" "ecs_target" {
   max_capacity       = 4
   min_capacity       = 2
@@ -225,19 +201,16 @@ resource "aws_appautoscaling_policy" "scale_up" {
   }
 }
 
+# RDS Postgres
 resource "aws_db_subnet_group" "db_subnets" {
   name       = "${local.name}-dbsubnet"
   subnet_ids = var.db_subnets
 }
 
 resource "aws_db_instance" "auth" {
-  # LocalStack Pro spins a real Postgres container per RDS instance. A bare
-  # "15" engine_version isn't resolved to a concrete image tag, which leaves
-  # the instance stuck in state 'error'. Pin to a fully-qualified version
-  # LocalStack ships with. Production RDS accepts this too.
   allocated_storage      = 20
   engine                 = "postgres"
-  engine_version         = "13.7"
+  engine_version = "15"
   instance_class         = "db.t3.micro"
   db_name                = "authdb"
   username               = var.db_username
@@ -248,8 +221,6 @@ resource "aws_db_instance" "auth" {
   db_subnet_group_name   = aws_db_subnet_group.db_subnets.name
   vpc_security_group_ids = [var.db_security_group_id]
 
-  # Defaults that AWS computes server-side but LocalStack mis-handles. Being
-  # explicit avoids spurious "configuration invalid" → state 'error' loops.
   monitoring_interval          = 0
   performance_insights_enabled = false
   multi_az                     = false
@@ -262,6 +233,7 @@ resource "aws_db_instance" "auth" {
   }
 }
 
+# Domain event topic and inbox queue
 resource "aws_sns_topic" "auth_events" {
   name = "${local.name}-events"
 }
@@ -274,6 +246,8 @@ resource "aws_sqs_queue" "auth_inbox" {
 
 data "aws_caller_identity" "current" {}
 
+# Cross-service subscriptions live in the root module to keep modules
+# acyclic; this policy allows any same-account SNS topic to deliver here.
 resource "aws_sqs_queue_policy" "auth_inbox_policy" {
   queue_url = aws_sqs_queue.auth_inbox.id
 

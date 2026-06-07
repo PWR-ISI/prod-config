@@ -1,3 +1,5 @@
+data "aws_caller_identity" "current" {}
+
 locals {
   name = "${var.project_name}-notification"
 }
@@ -20,7 +22,7 @@ resource "terraform_data" "ecr_pre_delete" {
       AWS_SECRET_ACCESS_KEY = "test"
       AWS_DEFAULT_REGION    = var.region
     }
-    command = "try { aws ecr delete-repository --repository-name ${local.name}-repo --force --endpoint-url http://localhost:4566 --region ${var.region} 2>$null } catch {}; exit 0"
+    command = "try { aws ecr delete-repository --repository-name ${local.name}-repo --force  --region ${var.region} 2>$null } catch {}; exit 0"
   }
 }
 
@@ -72,12 +74,54 @@ resource "aws_iam_role_policy" "task_role_policy" {
   role = aws_iam_role.task_role.name
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = ["sqs:*", "sns:*", "dynamodb:*", "logs:*"]
-      Resource = "*"
-    }]
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["sqs:*", "sns:*", "dynamodb:*", "logs:*"]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["ses:SendEmail", "ses:SendRawEmail"]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["cognito-idp:AdminGetUser", "cognito-idp:ListUsers"]
+        Resource = var.cognito_user_pool_arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["scheduler:CreateSchedule", "scheduler:DeleteSchedule", "scheduler:GetSchedule"]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = "iam:PassRole"
+        Resource = var.scheduler_exec_role_arn
+      },
+    ]
   })
+}
+
+# ── ALB Security Group ────────────────────────────────────────────────────────
+resource "aws_security_group" "alb_sg" {
+  name   = "${local.name}-alb-sg"
+  vpc_id = var.vpc_id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 }
 
 # ── ALB & Target Group ────────────────────────────────────────────────────────
@@ -86,7 +130,7 @@ resource "aws_lb" "alb" {
   internal           = false
   load_balancer_type = "application"
   subnets            = var.public_subnets
-  security_groups    = [var.ecs_security_group_id]
+  security_groups    = [aws_security_group.alb_sg.id]
 }
 
 resource "aws_lb_target_group" "tg" {
@@ -100,6 +144,7 @@ resource "aws_lb_target_group" "tg" {
     path                = "/api/v2/health/"
     matcher             = "200-399"
     interval            = 30
+    timeout             = 5
     healthy_threshold   = 2
     unhealthy_threshold = 3
   }
@@ -127,15 +172,23 @@ resource "aws_ecs_task_definition" "task" {
   task_role_arn            = aws_iam_role.task_role.arn
 
   container_definitions = jsonencode([{
-    name  = "notification"
-    image = "000000000000.dkr.ecr.${var.region}.localhost.localstack.cloud:4566/${local.name}:latest"
+    name      = "notification"
+    image     = "${aws_ecr_repository.notification.repository_url}:latest"
     essential = true
     portMappings = [{ containerPort = 8000, hostPort = 8000, protocol = "tcp" }]
     environment = [
-      { name = "AWS_REGION", value = var.region },
-      { name = "AWS_DEFAULT_REGION", value = var.region },
-      { name = "AWS_ENDPOINT_URL", value = "http://localstack:4566" },
-      { name = "DEBUG", value = "False" },
+      { name = "AWS_REGION",             value = var.region },
+      { name = "AWS_DEFAULT_REGION",     value = var.region },
+      { name = "DEBUG",                  value = "False" },
+      { name = "ALLOWED_HOSTS",          value = "*" },
+      { name = "SNS_TOPIC_ARN",          value = aws_sns_topic.notifications.arn },
+      { name = "SQS_QUEUE_URL",          value = aws_sqs_queue.notification_jobs.url },
+      { name = "EVENTS_SQS_QUEUE_URL",   value = aws_sqs_queue.notification_jobs.url },
+      { name = "NOTIFICATION_SQS_ARN",   value = aws_sqs_queue.notification_jobs.arn },
+      { name = "DYNAMODB_TABLE",         value = aws_dynamodb_table.notifications.name },
+      { name = "COGNITO_USER_POOL_ID",   value = var.cognito_user_pool_id },
+      { name = "SENDER_EMAIL",           value = var.sender_email },
+      { name = "SCHEDULER_ROLE_ARN",     value = var.scheduler_exec_role_arn },
     ]
     logConfiguration = {
       logDriver = "awslogs"
@@ -154,13 +207,12 @@ resource "aws_ecs_service" "service" {
   name            = "${local.name}-svc"
   cluster         = aws_ecs_cluster.cluster.id
   task_definition = aws_ecs_task_definition.task.arn
-  desired_count   = 1
+  desired_count   = 2
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = var.private_subnets
-    security_groups  = [var.ecs_security_group_id]
-    assign_public_ip = true
+    subnets         = var.private_subnets
+    security_groups = [var.ecs_security_group_id]
   }
 
   load_balancer {
@@ -172,6 +224,63 @@ resource "aws_ecs_service" "service" {
   depends_on = [aws_lb_listener.http]
 
   lifecycle { ignore_changes = [availability_zone_rebalancing] }
+}
+
+# ── Autoscaling ────────────────────────────────────────────────────────────────
+resource "aws_appautoscaling_target" "ecs_target" {
+  max_capacity       = 4
+  min_capacity       = 2
+  resource_id        = "service/${aws_ecs_cluster.cluster.name}/${aws_ecs_service.service.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  service_namespace  = "ecs"
+}
+
+resource "aws_appautoscaling_policy" "scale_cpu" {
+  name               = "${local.name}-scale-cpu"
+  policy_type        = "TargetTrackingScaling"
+  resource_id        = aws_appautoscaling_target.ecs_target.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs_target.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.ecs_target.service_namespace
+
+  target_tracking_scaling_policy_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+    target_value = 50.0
+  }
+}
+
+variable "cognito_user_pool_arn" {
+  type    = string
+  default = ""
+  description = "ARN of Cognito User Pool for email lookup in notification handlers"
+}
+
+variable "scheduler_exec_role_arn" {
+  type    = string
+  default = ""
+  description = "ARN of EventBridge Scheduler execution role"
+}
+
+variable "notification_email" {
+  type    = string
+  default = ""
+  description = "Email address to subscribe to notification SNS topic"
+}
+
+variable "cognito_user_pool_id" {
+  type    = string
+  default = ""
+}
+
+variable "sender_email" {
+  type    = string
+  default = ""
+}
+
+variable "files_bucket_name" {
+  type    = string
+  default = ""
 }
 
 # ── Google Calendar integration (Priority 2) ──────────────────────────────────
@@ -192,7 +301,8 @@ variable "google_oauth_client_secret" {
 
 variable "google_oauth_redirect_uri" {
   type    = string
-  default = "http://localhost:8003/api/v2/google/callback/"
+  default = ""
+  description = "Callback URI for Google OAuth - set to API Gateway URL in prod"
 }
 
 variable "google_token_encryption_key" {
@@ -219,7 +329,8 @@ variable "auth_service_url" {
 # becomes the notification_jobs URL output below.
 variable "payment_success_queue_url" {
   type    = string
-  default = "http://localstack:4566/000000000000/payment-success"
+  default = ""
+  description = "SQS queue URL for payment success events - set in main.tf"
 }
 
 resource "aws_dynamodb_table" "notifications" {
@@ -253,10 +364,10 @@ resource "aws_sqs_queue_policy" "notification_jobs" {
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"
-      Principal = "*"
+      Principal = { Service = "sns.amazonaws.com" }
       Action    = "sqs:SendMessage"
       Resource  = aws_sqs_queue.notification_jobs.arn
-      Condition = { ArnEquals = { "aws:SourceArn" = aws_sns_topic.notifications.arn } }
+      Condition = { ArnLike = { "aws:SourceArn" = "arn:aws:sns:*:*:${var.project_name}-*" } }
     }]
   })
 }
@@ -267,9 +378,18 @@ resource "aws_sns_topic_subscription" "notification_jobs" {
   endpoint  = aws_sqs_queue.notification_jobs.arn
 }
 
+# Email subscription — set notification_email var to activate
+resource "aws_sns_topic_subscription" "email" {
+  count     = var.notification_email != "" ? 1 : 0
+  topic_arn = aws_sns_topic.notifications.arn
+  protocol  = "email"
+  endpoint  = var.notification_email
+}
+
 output "sns_topic_arn" { value = aws_sns_topic.notifications.arn }
 output "sqs_app_events_url" { value = aws_sqs_queue.app_events.url }
 output "sqs_notification_jobs_url" { value = aws_sqs_queue.notification_jobs.url }
+output "sqs_notification_jobs_arn" { value = aws_sqs_queue.notification_jobs.arn }
 output "dynamodb_table_name" { value = aws_dynamodb_table.notifications.name }
 
 # Env-var bundle the notification-service container/task should receive.
@@ -289,7 +409,6 @@ output "container_env_vars" {
     GOOGLE_OAUTH_CLIENT_SECRET  = var.google_oauth_client_secret
     GOOGLE_OAUTH_REDIRECT_URI   = var.google_oauth_redirect_uri
     GOOGLE_TOKEN_ENCRYPTION_KEY = var.google_token_encryption_key
-    AWS_ENDPOINT_URL            = "http://localstack:4566"
     AWS_REGION                  = var.region
     AWS_DEFAULT_REGION          = var.region
   }

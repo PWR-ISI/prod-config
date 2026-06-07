@@ -116,6 +116,12 @@ variable "payu_oauth_client_secret" {
   default   = ""
 }
 
+variable "notification_email" {
+  type        = string
+  description = "Email address to receive SNS notifications"
+  default     = ""
+}
+
 # LocalStack routing mode
 # true = use direct target IPs (10.196.242.59:8000) - LocalStack workaround for API GW → ALB
 # false = use ALB DNS names (AWS production pattern with VPC Link)

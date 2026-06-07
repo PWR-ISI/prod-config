@@ -1,3 +1,5 @@
+data "aws_caller_identity" "current" {}
+
 locals {
   name = "${var.project_name}-payment"
 }
@@ -12,7 +14,7 @@ resource "terraform_data" "ecr_pre_delete" {
       AWS_SECRET_ACCESS_KEY = "test"
       AWS_DEFAULT_REGION    = var.region
     }
-    command = "try { aws ecr delete-repository --repository-name ${local.name}-repo --force --endpoint-url http://localhost:4566 --region ${var.region} 2>$null } catch {}; exit 0"
+    command = "try { aws ecr delete-repository --repository-name ${local.name}-repo --force  --region ${var.region} 2>$null } catch {}; exit 0"
   }
 }
 
@@ -121,7 +123,7 @@ resource "aws_db_subnet_group" "db_subnets" {
 resource "aws_db_instance" "payment" {
   allocated_storage      = 20
   engine                 = "postgres"
-  engine_version         = "13.7"
+  engine_version = "15"
   instance_class         = "db.t3.micro"
   db_name                = "payment_db"
   username               = var.db_username
@@ -162,7 +164,6 @@ resource "aws_ecs_task_definition" "task" {
       # LocalStack ECS ignores entryPoint — put sh -c in command so Docker CMD is ["sh","-c","..."]
       command = ["sh", "-c", "python manage.py migrate --noinput && gunicorn payment.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 120"]
       environment = [
-        { name = "AWS_ENDPOINT_URL",                  value = "http://localstack:4566" },
         { name = "AWS_REGION",                        value = var.region },
         { name = "AWS_DEFAULT_REGION",                value = var.region },
         { name = "AWS_ACCESS_KEY_ID",                 value = "test" },
@@ -173,8 +174,8 @@ resource "aws_ecs_task_definition" "task" {
         { name = "DJANGO_DB_USER",                    value = var.db_username },
         { name = "DJANGO_DB_PASSWORD",                value = nonsensitive(var.db_password) },
         { name = "ALLOWED_HOSTS",                     value = "*" },
-        { name = "AWS_SQS_PAYMENT_SUCCESS_QUEUE_URL", value = "http://localstack:4566/000000000000/payment-success" },
-        { name = "AWS_SQS_PAYMENT_FAILED_QUEUE_URL",  value = "http://localstack:4566/000000000000/payment-failed" },
+        { name = "AWS_SQS_PAYMENT_SUCCESS_QUEUE_URL", value = "https://sqs.${var.region}.amazonaws.com/${data.aws_caller_identity.current.account_id}/payment-success" },
+        { name = "AWS_SQS_PAYMENT_FAILED_QUEUE_URL",  value = "https://sqs.${var.region}.amazonaws.com/${data.aws_caller_identity.current.account_id}/payment-failed" },
         { name = "PAYU_MERCHANT_ID",                  value = nonsensitive(var.payu_merchant_id) },
         { name = "PAYU_API_KEY",                      value = nonsensitive(var.payu_api_key) },
         { name = "PAYU_OAUTH_CLIENT_ID",              value = nonsensitive(var.payu_oauth_client_id) },

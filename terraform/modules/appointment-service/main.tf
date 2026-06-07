@@ -12,7 +12,7 @@ resource "terraform_data" "ecr_pre_delete" {
       AWS_SECRET_ACCESS_KEY = "test"
       AWS_DEFAULT_REGION    = var.region
     }
-    command = "try { aws ecr delete-repository --repository-name ${local.name}-repo --force --endpoint-url http://localhost:4566 --region ${var.region} 2>$null } catch {}; exit 0"
+    command = "try { aws ecr delete-repository --repository-name ${local.name}-repo --force  --region ${var.region} 2>$null } catch {}; exit 0"
   }
 }
 
@@ -214,7 +214,7 @@ resource "aws_db_subnet_group" "db_subnets" {
 resource "aws_db_instance" "core" {
   allocated_storage      = 20
   engine                 = "postgres"
-  engine_version         = "13.7"
+  engine_version = "15"
   instance_class         = "db.t3.micro"
   db_name                = "coredb"
   username               = var.db_username

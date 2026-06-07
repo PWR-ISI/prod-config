@@ -19,20 +19,17 @@ resource "aws_apigatewayv2_api" "medical" {
 }
 
 # ── Auth Service Integration ─────────────────────────────────────────────────
-# For LocalStack: access through localhost on exposed port
-# For AWS: endpoint is ALB DNS name on port 80, routed via VPC Link
+# HTTP_PROXY to schedule service (auth disabled - use Cognito Hosted UI)
 resource "aws_apigatewayv2_integration" "auth" {
   api_id             = aws_apigatewayv2_api.medical.id
   integration_type   = "HTTP_PROXY"
   integration_method = "ANY"
-
-  integration_uri = var.use_direct_service_routing ? "http://172.18.0.3:8000" : "http://${var.auth_service_endpoint}:80"
+  integration_uri    = "http://${var.schedule_service_endpoint}:80"
+  payload_format_version = "1.0"
 
   request_parameters = {
-    "overwrite:path" = "/api/v2/auth/$request.path.proxy"
+    "overwrite:path" = "/api/v1/auth/$request.path.proxy"
   }
-
-  payload_format_version = "1.0"
 }
 
 resource "aws_apigatewayv2_route" "auth" {
@@ -44,13 +41,16 @@ resource "aws_apigatewayv2_route" "auth" {
 # ── Services Integrations ────────────────────────────────────────────────────
 locals {
   services = {
-    appointments  = var.appointment_service_endpoint
-    schedule      = var.schedule_service_endpoint
-    payments      = var.payment_service_endpoint
-    notifications = var.notification_service_endpoint
-    facilities    = var.facility_staff_service_endpoint
-    records       = var.medical_record_service_endpoint
-    audit         = var.audit_service_endpoint
+    # MVP: schedule (appointments) and file-upload
+    schedule     = var.schedule_service_endpoint
+    file-upload  = var.file_upload_service_endpoint
+    # disabled services:
+    # appointments  = var.appointment_service_endpoint
+    # payments      = var.payment_service_endpoint
+    # notifications = var.notification_service_endpoint
+    # facilities    = var.facility_staff_service_endpoint
+    # records       = var.medical_record_service_endpoint
+    # audit         = var.audit_service_endpoint
   }
 
 }
@@ -65,7 +65,7 @@ resource "aws_apigatewayv2_integration" "service" {
   integration_uri = each.value != "" ? "http://${each.value}:80" : "http://localhost:8000"
 
   request_parameters = {
-    "overwrite:path" = "/api/v1/${each.key}$request.path.proxy"
+    "overwrite:path" = "/api/v1/$request.path.proxy"
   }
 }
 
@@ -81,4 +81,14 @@ resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.medical.id
   name        = "$default"
   auto_deploy = true
+
+  default_route_settings {
+    detailed_metrics_enabled        = true
+    data_trace_enabled              = false
+    logging_level                   = "OFF"
+    throttling_burst_limit          = 10000
+    throttling_rate_limit           = 20000
+  }
 }
+
+# Usunąć - CORS w api-gateway dla HTTP API V2 obsługuje OPTIONS automatycznie

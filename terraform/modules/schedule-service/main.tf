@@ -12,7 +12,7 @@ resource "terraform_data" "ecr_pre_delete" {
       AWS_SECRET_ACCESS_KEY = "test"
       AWS_DEFAULT_REGION    = var.region
     }
-    command = "try { aws ecr delete-repository --repository-name ${local.name}-repo --force --endpoint-url http://localhost:4566 --region ${var.region} 2>$null } catch {}; exit 0"
+    command = "try { aws ecr delete-repository --repository-name ${local.name}-repo --force  --region ${var.region} 2>$null } catch {}; exit 0"
   }
 }
 
@@ -82,6 +82,41 @@ resource "aws_iam_role_policy" "task_role_sns_sqs" {
   })
 }
 
+resource "aws_iam_role_policy" "task_role_s3" {
+  role = aws_iam_role.task_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"]
+      Resource = "${var.files_bucket_arn}/*"
+    }, {
+      Effect   = "Allow"
+      Action   = ["s3:ListBucket"]
+      Resource = var.files_bucket_arn
+    }]
+  })
+}
+
+# CloudWatch Logs permissions for task execution role
+resource "aws_iam_role_policy" "task_exec_cloudwatch" {
+  role = aws_iam_role.task_exec_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = "arn:aws:logs:${var.region}:*:log-group:/ecs/schedule-service:*"
+      },
+    ]
+  })
+}
+
 # ALB
 resource "aws_lb" "alb" {
   name               = "${local.name}-alb"
@@ -98,8 +133,8 @@ resource "aws_lb_target_group" "tg" {
   target_type = "ip"
 
   health_check {
-    path                = "/api/v2/health/"
-    matcher             = "200"
+    path                = "/health/"
+    matcher             = "200-299"
     interval            = 30
     timeout             = 5
     healthy_threshold   = 2
@@ -134,6 +169,14 @@ resource "aws_ecs_task_definition" "task" {
       image     = "${aws_ecr_repository.schedule.repository_url}:latest"
       essential = true
       portMappings = [{ containerPort = 8000, hostPort = 8000 }]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = "/ecs/schedule-service"
+          "awslogs-region"        = var.region
+          "awslogs-stream-prefix" = "ecs"
+        }
+      }
       environment = [
         { name = "AWS_REGION", value = var.region },
         { name = "DJANGO_DB_HOST", value = aws_db_instance.schedule.address },
@@ -144,6 +187,11 @@ resource "aws_ecs_task_definition" "task" {
         { name = "SCHEDULE_SNS_TOPIC_ARN", value = aws_sns_topic.schedule_events.arn },
         { name = "EVENTS_SQS_QUEUE_URL", value = aws_sqs_queue.schedule_inbox.url },
         { name = "ALLOWED_HOSTS", value = "*" },
+        { name = "CLOUDWATCH_LOG_GROUP", value = "/ecs/schedule-service" },
+        { name = "CLOUDWATCH_REGION", value = var.region },
+        { name = "LOG_LEVEL", value = "INFO" },
+        { name = "LOG_FORMAT", value = "json" },
+        { name = "AWS_S3_BUCKET", value = var.files_bucket_name },
       ]
     }
   ])
@@ -210,7 +258,7 @@ resource "aws_db_subnet_group" "db_subnets" {
 resource "aws_db_instance" "schedule" {
   allocated_storage      = 20
   engine                 = "postgres"
-  engine_version         = "13.7"
+  engine_version = "15"
   instance_class         = "db.t3.micro"
   db_name                = "scheduledb"
   username               = var.db_username

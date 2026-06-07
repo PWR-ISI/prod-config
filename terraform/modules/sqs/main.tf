@@ -40,3 +40,26 @@ resource "aws_sqs_queue" "service" {
     Service = each.key
   }
 }
+
+# Payment-specific queues for success/failed events
+resource "aws_sqs_queue" "payment_success" {
+  name                       = "${var.project_name}-payment-success"
+  visibility_timeout_seconds = 300
+  message_retention_seconds  = 86400 # 1 day
+
+  tags = {
+    Project = var.project_name
+    Service = "payment-service"
+  }
+}
+
+resource "aws_sqs_queue" "payment_failed" {
+  name                       = "${var.project_name}-payment-failed"
+  visibility_timeout_seconds = 300
+  message_retention_seconds  = 86400 # 1 day
+
+  tags = {
+    Project = var.project_name
+    Service = "payment-service"
+  }
+}

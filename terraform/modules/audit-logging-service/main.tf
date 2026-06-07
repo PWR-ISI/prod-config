@@ -4,7 +4,6 @@ locals {
 
 resource "aws_ecr_repository" "audit" {
   name = "${local.name}-repo"
-  count = 0
 
   image_scanning_configuration { scan_on_push = false }
   force_delete = true
@@ -108,7 +107,7 @@ resource "aws_ecs_task_definition" "task" {
   container_definitions = jsonencode([
     {
       name         = "audit"
-      image        = "000000000000.dkr.ecr.${var.region}.localhost.localstack.cloud:4566/${local.name}:latest"
+      image = "${aws_ecr_repository.audit.repository_url}:latest"
       essential    = true
       portMappings = [{ containerPort = 8000, hostPort = 8000, protocol = "tcp" }]
       environment = [
@@ -194,7 +193,7 @@ resource "aws_db_subnet_group" "db_subnets" {
 resource "aws_db_instance" "audit" {
   allocated_storage      = 20
   engine                 = "postgres"
-  engine_version         = "13.7"
+  engine_version = "15"
   instance_class         = "db.t3.micro"
   db_name                = "auditdb"
   username               = var.db_username
