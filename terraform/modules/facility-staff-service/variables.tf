@@ -38,12 +38,6 @@ variable "db_password" {
   default   = "appuser123"
 }
 
-
-variable "sqs_app_events_url" {
-  type    = string
-  default = ""
-}
-
 variable "cognito_user_pool_id" {
   type    = string
   default = ""

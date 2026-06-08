@@ -7,3 +7,17 @@
 __pycache__/
 .vscode/
 .idea/
+
+# Terraform state, plans, and provider cache
+.terraform/
+*.tfstate
+*.tfstate.*
+tfplan
+*.tfplan
+
+# Logs and debug scratch files
+*.log
+auth-tail.txt
+facility-clog.txt
+seed-out.txt
+seed_june.py

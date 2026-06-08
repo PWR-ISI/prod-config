@@ -1,35 +1,16 @@
 locals {
-  name = "${var.project_name}-core"
+  name = "${var.project_name}-medical"
 }
 
-resource "terraform_data" "ecr_pre_delete" {
-  triggers_replace = { repo_name = "${local.name}-repo" }
-
-  provisioner "local-exec" {
-    interpreter = ["powershell", "-NoProfile", "-Command"]
-    environment = {
-      AWS_ACCESS_KEY_ID     = "test"
-      AWS_SECRET_ACCESS_KEY = "test"
-      AWS_DEFAULT_REGION    = var.region
-    }
-    command = "try { aws ecr delete-repository --repository-name ${local.name}-repo --force --endpoint-url http://localhost:4566 --region ${var.region} 2>$null } catch {}; exit 0"
-  }
-}
-
-resource "aws_ecr_repository" "core" {
+resource "aws_ecr_repository" "medical" {
   name = "${local.name}-repo"
+  count = 0
 
   image_scanning_configuration { scan_on_push = false }
   force_delete = true
-
-  depends_on = [terraform_data.ecr_pre_delete]
-
-  lifecycle {
-    ignore_changes = [image_scanning_configuration, image_tag_mutability]
-  }
 }
 
-resource "aws_cloudwatch_log_group" "core" {
+resource "aws_cloudwatch_log_group" "medical" {
   name              = "/ecs/${local.name}"
   retention_in_days = 7
 }
@@ -126,27 +107,26 @@ resource "aws_ecs_task_definition" "task" {
 
   container_definitions = jsonencode([
     {
-      name         = "core"
-      image        = "${aws_ecr_repository.core.repository_url}:latest"
+      name         = "medical"
+      image        = "000000000000.dkr.ecr.${var.region}.localhost.localstack.cloud:4566/${local.name}:latest"
       essential    = true
       portMappings = [{ containerPort = 8000, hostPort = 8000, protocol = "tcp" }]
       environment = [
         { name = "AWS_REGION", value = var.region },
         { name = "AWS_DEFAULT_REGION", value = var.region },
-        { name = "DB_HOST", value = aws_db_instance.core.address },
-        { name = "DB_PORT", value = tostring(aws_db_instance.core.port) },
-        { name = "DB_NAME", value = "coredb" },
+        { name = "DB_HOST", value = aws_db_instance.medical.address },
+        { name = "DB_PORT", value = tostring(aws_db_instance.medical.port) },
+        { name = "DB_NAME", value = "medicaldb" },
         { name = "DB_USER", value = var.db_username },
         { name = "DB_PASSWORD", value = nonsensitive(var.db_password) },
-        { name = "SQS_APP_EVENTS_URL", value = var.sqs_app_events_url },
         { name = "COGNITO_USER_POOL_ID", value = var.cognito_user_pool_id },
       ]
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          awslogs-group         = aws_cloudwatch_log_group.core.name
+          awslogs-group         = aws_cloudwatch_log_group.medical.name
           awslogs-region        = var.region
-          awslogs-stream-prefix = "core"
+          awslogs-stream-prefix = "medical"
         }
       }
     }
@@ -172,7 +152,7 @@ resource "aws_ecs_service" "service" {
 
   load_balancer {
     target_group_arn = aws_lb_target_group.tg.arn
-    container_name   = "core"
+    container_name   = "medical"
     container_port   = 8000
   }
 
@@ -211,12 +191,12 @@ resource "aws_db_subnet_group" "db_subnets" {
   subnet_ids = var.db_subnets
 }
 
-resource "aws_db_instance" "core" {
+resource "aws_db_instance" "medical" {
   allocated_storage      = 20
   engine                 = "postgres"
   engine_version         = "13.7"
   instance_class         = "db.t3.micro"
-  db_name                = "coredb"
+  db_name                = "medicaldb"
   username               = var.db_username
   password               = var.db_password
   skip_final_snapshot    = true
@@ -237,27 +217,20 @@ resource "aws_db_instance" "core" {
   }
 }
 
-# Domain event topic. appointment-service publishes here; schedule-service
-# (and notification, audit, etc.) subscribe via their own inbox queues.
-resource "aws_sns_topic" "appointment_events" {
+resource "aws_sns_topic" "medical_events" {
   name = "${local.name}-events"
 }
 
-# Inbox queue this service drains. Populated by subscriptions to other
-# services' topics — payment events especially.
-resource "aws_sqs_queue" "appointment_inbox" {
+resource "aws_sqs_queue" "medical_inbox" {
   name                       = "${local.name}-inbox"
   visibility_timeout_seconds = 60
   message_retention_seconds  = 1209600
 }
 
-# Policy allowing SNS within this account to deliver to the inbox queue.
-# Cross-service subscriptions are declared at the root module to avoid
-# cyclic dependencies between sibling modules.
 data "aws_caller_identity" "current" {}
 
-resource "aws_sqs_queue_policy" "appointment_inbox_policy" {
-  queue_url = aws_sqs_queue.appointment_inbox.id
+resource "aws_sqs_queue_policy" "medical_inbox_policy" {
+  queue_url = aws_sqs_queue.medical_inbox.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -265,7 +238,7 @@ resource "aws_sqs_queue_policy" "appointment_inbox_policy" {
       Effect    = "Allow"
       Principal = { Service = "sns.amazonaws.com" }
       Action    = "sqs:SendMessage"
-      Resource  = aws_sqs_queue.appointment_inbox.arn
+      Resource  = aws_sqs_queue.medical_inbox.arn
       Condition = {
         StringEquals = {
           "aws:SourceAccount" = data.aws_caller_identity.current.account_id

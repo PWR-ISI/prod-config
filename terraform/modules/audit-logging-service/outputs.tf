@@ -3,24 +3,24 @@ output "alb_dns" {
 }
 
 output "db_endpoint" {
-  value = aws_db_instance.core.address
+  value = aws_db_instance.audit.address
 }
 
 output "sns_topic_arn" {
-  value = aws_sns_topic.appointment_events.arn
+  value = aws_sns_topic.audit_events.arn
 }
 
 output "sqs_queue_url" {
-  value = aws_sqs_queue.appointment_inbox.url
+  value = aws_sqs_queue.audit_inbox.url
 }
 
 output "sqs_queue_arn" {
-  value = aws_sqs_queue.appointment_inbox.arn
+  value = aws_sqs_queue.audit_inbox.arn
 }
 
-output "ecr_repository_url" {
-  value = aws_ecr_repository.core.repository_url
-}
+# output "ecr_repository_url" {
+#   value = aws_ecr_repository.audit.repository_url
+# }
 
 output "ecs_cluster" {
   value = aws_ecs_cluster.cluster.name
