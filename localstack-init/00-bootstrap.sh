@@ -7,8 +7,8 @@ REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 ACCOUNT_ID="000000000000"
 IDS_FILE="/etc/localstack/init/ready.d/ids.env"
 
-if [ -f "$IDS_FILE" ]; then
-  echo "[bootstrap] ids.env already exists — resources already provisioned, skipping."
+if [ -f "$IDS_FILE" ] && grep -q "^COGNITO_USER_POOL_ID=" "$IDS_FILE" 2>/dev/null; then
+  echo "[bootstrap] ids.env already exists with Cognito IDs — resources already provisioned, skipping."
   exit 0
 fi
 
