@@ -27,31 +27,39 @@ NOTIF_QUEUE_URL="$(awslocal sqs get-queue-url --queue-name notification-jobs --q
 NOTIF_QUEUE_ARN="$(awslocal sqs get-queue-attributes --queue-url "$NOTIF_QUEUE_URL" --attribute-names QueueArn --query 'Attributes.QueueArn' --output text)"
 awslocal sns subscribe --topic-arn "$NOTIF_TOPIC_ARN" --protocol sqs --notification-endpoint "$NOTIF_QUEUE_ARN" >/dev/null
 
-echo "[bootstrap] creating Cognito User Pool..."
-USER_POOL_ID="$(awslocal cognito-idp create-user-pool \
-  --pool-name prod-config-pool \
-  --auto-verified-attributes email \
-  --policies 'PasswordPolicy={MinimumLength=8,RequireUppercase=false,RequireLowercase=false,RequireNumbers=false,RequireSymbols=false}' \
-  --query 'UserPool.Id' --output text)"
-
-USER_POOL_CLIENT_ID="$(awslocal cognito-idp create-user-pool-client \
-  --user-pool-id "$USER_POOL_ID" \
-  --client-name prod-config-client \
-  --no-generate-secret \
-  --explicit-auth-flows ALLOW_USER_PASSWORD_AUTH ALLOW_REFRESH_TOKEN_AUTH \
-  --query 'UserPoolClient.ClientId' --output text)"
-
-echo "[bootstrap] seeding test user (test@example.com / Test1234)..."
-awslocal cognito-idp admin-create-user \
-  --user-pool-id "$USER_POOL_ID" \
-  --username test@example.com \
-  --user-attributes Name=email,Value=test@example.com Name=email_verified,Value=true \
-  --message-action SUPPRESS >/dev/null
-awslocal cognito-idp admin-set-user-password \
-  --user-pool-id "$USER_POOL_ID" \
-  --username test@example.com \
-  --password Test1234 \
-  --permanent >/dev/null
+# Cognito is a Pro-only feature. On Community edition (used for the offline demo,
+# where auth runs in local mode) it is unavailable, so make this section
+# non-fatal: if Cognito isn't supported we just leave the IDs empty.
+echo "[bootstrap] creating Cognito User Pool (skipped if unsupported)..."
+USER_POOL_ID=""
+USER_POOL_CLIENT_ID=""
+if awslocal cognito-idp list-user-pools --max-results 1 >/dev/null 2>&1; then
+  USER_POOL_ID="$(awslocal cognito-idp create-user-pool \
+    --pool-name prod-config-pool \
+    --auto-verified-attributes email \
+    --policies 'PasswordPolicy={MinimumLength=8,RequireUppercase=false,RequireLowercase=false,RequireNumbers=false,RequireSymbols=false}' \
+    --query 'UserPool.Id' --output text 2>/dev/null || echo '')"
+  if [ -n "$USER_POOL_ID" ]; then
+    USER_POOL_CLIENT_ID="$(awslocal cognito-idp create-user-pool-client \
+      --user-pool-id "$USER_POOL_ID" \
+      --client-name prod-config-client \
+      --no-generate-secret \
+      --explicit-auth-flows ALLOW_USER_PASSWORD_AUTH ALLOW_REFRESH_TOKEN_AUTH \
+      --query 'UserPoolClient.ClientId' --output text 2>/dev/null || echo '')"
+    awslocal cognito-idp admin-create-user \
+      --user-pool-id "$USER_POOL_ID" \
+      --username test@example.com \
+      --user-attributes Name=email,Value=test@example.com Name=email_verified,Value=true \
+      --message-action SUPPRESS >/dev/null 2>&1 || true
+    awslocal cognito-idp admin-set-user-password \
+      --user-pool-id "$USER_POOL_ID" \
+      --username test@example.com \
+      --password Test1234 \
+      --permanent >/dev/null 2>&1 || true
+  fi
+else
+  echo "[bootstrap] cognito-idp not available (Community edition) — skipping."
+fi
 
 # ECR repositories are owned by Terraform (modules: auth, appointment/core,
 # payment, schedule). Creating them here caused RepositoryAlreadyExistsException
