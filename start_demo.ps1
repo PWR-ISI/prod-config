@@ -30,10 +30,25 @@ foreach ($s in $services) {
     Write-Host "    $s OK"
 }
 
-Write-Host "==> 4/5  Czekam az serwisy wstana..." -ForegroundColor Cyan
+Write-Host "==> 4/6  Czekam az serwisy wstana..." -ForegroundColor Cyan
 Start-Sleep -Seconds 12
 
-Write-Host "==> 5/5  Seeduje dane demo (powiadomienia + dokumenty medyczne)..." -ForegroundColor Cyan
+Write-Host "==> 5/6  Konfiguruje zdarzenia SNS->SQS i startuje konsumenta powiadomien..." -ForegroundColor Cyan
+# LocalStack nie zapisuje SNS/SQS po restarcie - odtwarzamy temat, kolejke i subskrypcje.
+docker exec prod-localstack bash -c '
+awslocal sqs create-queue --queue-name notification-jobs >/dev/null 2>&1
+QURL=$(awslocal sqs get-queue-url --queue-name notification-jobs --query QueueUrl --output text)
+QARN=$(awslocal sqs get-queue-attributes --queue-url "$QURL" --attribute-names QueueArn --query Attributes.QueueArn --output text)
+TARN=$(awslocal sns create-topic --name notifications --query TopicArn --output text)
+awslocal sqs set-queue-attributes --queue-url "$QURL" --attributes "{\"Policy\":\"{\\\"Version\\\":\\\"2012-10-17\\\",\\\"Statement\\\":[{\\\"Effect\\\":\\\"Allow\\\",\\\"Principal\\\":\\\"*\\\",\\\"Action\\\":\\\"sqs:SendMessage\\\",\\\"Resource\\\":\\\"$QARN\\\"}]}\"}" >/dev/null 2>&1
+awslocal sns subscribe --topic-arn "$TARN" --protocol sqs --notification-endpoint "$QARN" >/dev/null 2>&1
+echo "    SNS topic + SQS notification-jobs + subskrypcja OK"
+'
+# Konsument zdarzen: zamienia zdarzenia (np. appointment.created) na powiadomienia.
+docker exec -d notification-service python manage.py consume_events
+Write-Host "    Konsument powiadomien uruchomiony"
+
+Write-Host "==> 6/6  Seeduje dane demo (powiadomienia + dokumenty medyczne)..." -ForegroundColor Cyan
 docker exec medical-record-service python seed_demo.py
 docker exec notification-service python seed_demo.py
 
