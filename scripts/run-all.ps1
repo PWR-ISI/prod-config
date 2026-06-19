@@ -1,4 +1,4 @@
-<#
+﻿<#
   run-all.ps1  —  One-shot LocalStack deployment of the ISI medical system.
 
   Brings the whole stack up from scratch on LocalStack (emulated AWS):
@@ -25,11 +25,14 @@
 #>
 param([switch]$SkipFrontend, [switch]$SkipSeed, [switch]$SkipBuild)
 
-$ErrorActionPreference = "Stop"
+# NOTE: "Continue" (not "Stop") so native tools writing to stderr (docker/aws/terraform)
+# don't abort the script under Windows PowerShell 5.1. Every critical step below has an
+# explicit $LASTEXITCODE check / try-catch, so real failures are still caught.
+$ErrorActionPreference = "Continue"
 
 $ScriptDir  = $PSScriptRoot
 $ProdConfig = Split-Path $ScriptDir  -Parent          # ...\ISI\prod-config
-$Root       = Split-Path $ProdConfig -Parent          # ...\ISI  (service repos live here)
+$Root       = $ProdConfig                             # monorepo: module sources live INSIDE prod-config
 $Reg        = "000000000000.dkr.ecr.us-east-1.localhost.localstack.cloud:4566"
 
 function Set-AwsEnv {

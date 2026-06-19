@@ -1,4 +1,4 @@
-# ISI Medical System - LocalStack Fargate Deployment
+﻿# ISI Medical System - LocalStack Fargate Deployment
 # Windows PowerShell Script
 #
 # Actions:

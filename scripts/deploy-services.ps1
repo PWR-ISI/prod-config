@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$Region = "us-east-1"
 )
 
