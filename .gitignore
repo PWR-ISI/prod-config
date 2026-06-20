@@ -39,3 +39,8 @@ db.sqlite3
 # Node
 node_modules/
 dist/
+
+# runtime/scratch dumps
+auth-tail.txt
+facility-clog.txt
+seed-out.txt

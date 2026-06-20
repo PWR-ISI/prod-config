@@ -26,7 +26,7 @@ resource "aws_apigatewayv2_integration" "auth" {
   integration_type   = "HTTP_PROXY"
   integration_method = "ANY"
 
-  integration_uri = var.use_direct_service_routing ? "http://172.18.0.3:8000" : "http://${var.auth_service_endpoint}:80"
+  integration_uri = var.use_direct_service_routing ? "http://172.18.0.3:8000" : "http://${var.auth_service_endpoint}:4566"
 
   request_parameters = {
     "overwrite:path" = "/api/v2/auth/$request.path.proxy"
@@ -62,7 +62,7 @@ resource "aws_apigatewayv2_integration" "service" {
   integration_method = "ANY"
 
   # Use ALB endpoints on port 80 (ALB forwards to port 8000 on ECS tasks)
-  integration_uri = each.value != "" ? "http://${each.value}:80" : "http://localhost:8000"
+  integration_uri = each.value != "" ? "http://${each.value}:4566" : "http://localhost:8000"
 
   request_parameters = {
     "overwrite:path" = "/api/v1/${each.key}$request.path.proxy"
