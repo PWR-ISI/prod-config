@@ -1,19 +1,3 @@
-# ── API Gateway (HTTP API V2) ──────────────────────────────────────────────────
-output "api_gateway_id" {
-  description = "API Gateway HTTP API ID"
-  value       = module.api_gateway.api_gateway_id
-}
-
-output "api_gateway_endpoint" {
-  description = "API Gateway endpoint URL (HTTP for LocalStack)"
-  value       = module.api_gateway.api_gateway_endpoint
-}
-
-output "api_gateway_endpoint_https" {
-  description = "API Gateway endpoint URL (HTTPS for frontend)"
-  value       = replace(module.api_gateway.api_gateway_endpoint, "http://", "https://")
-}
-
 # ── Cognito ────────────────────────────────────────────────────────────────────
 output "cognito_user_pool_id" {
   description = "Cognito User Pool ID"

@@ -103,7 +103,6 @@ if ($LASTEXITCODE -ne 0) {
     terraform apply -auto-approve -no-color
     if ($LASTEXITCODE -ne 0) { Pop-Location; throw "terraform apply failed twice" }
 }
-$ApiId = (terraform output -raw api_gateway_id) 2>$null
 Pop-Location
 
 # ---------------------------------------------------------------------------
@@ -157,7 +156,6 @@ if (-not $SkipFrontend) {
 # ---------------------------------------------------------------------------
 Write-Host "`n================  DEPLOYMENT COMPLETE  ================" -ForegroundColor Green
 Write-Host "Frontend:     http://prod-config-frontend.s3-website.localhost.localstack.cloud:4566"
-if ($ApiId) { Write-Host "API Gateway:  http://$ApiId.execute-api.localhost.localstack.cloud:4566" }
 Write-Host "Auth (ALB):   http://prod-config-auth-alb.elb.localhost.localstack.cloud:4566/api/v2/health/"
 Write-Host "Schedule(ALB):http://prod-config-schedule-alb.elb.localhost.localstack.cloud:4566/health/"
 Write-Host "`nLogin/Register from the frontend. New accounts land in the Cognito pool the auth service uses."

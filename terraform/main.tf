@@ -158,28 +158,6 @@ module "payment_service" {
   payu_oauth_client_secret = var.payu_oauth_client_secret
 }
 
-module "api_gateway" {
-  source       = "./modules/api-gateway"
-  providers    = { aws = aws.localstack }
-
-  project_name          = var.project_name
-  region                = var.region
-  cognito_user_pool_id  = module.cognito.user_pool_id
-  cognito_app_client_id = module.cognito.app_client_id
-  use_direct_service_routing = false
-
-  # For both LocalStack and AWS: Use ALB DNS names (API Gateway → ALB → ECS targets)
-  # ALB listens on port 80 and forwards to port 8000 on ECS tasks
-  appointment_service_endpoint    = module.appointment_service.alb_dns
-  payment_service_endpoint        = module.payment_service.alb_dns
-  auth_service_endpoint           = module.auth_service.alb_dns
-  schedule_service_endpoint       = module.schedule_service.alb_dns
-  notification_service_endpoint   = module.notification_service.alb_dns
-  facility_staff_service_endpoint = module.facility_service.alb_dns
-  medical_record_service_endpoint = module.medical_service.alb_dns
-  audit_service_endpoint          = module.audit_service.alb_dns
-}
-
 module "frontend" {
   source       = "./modules/frontend"
   providers    = { aws = aws.localstack }
