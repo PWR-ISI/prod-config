@@ -176,6 +176,14 @@ resource "aws_sns_topic_subscription" "schedule_inbox_subscribes_to_appointment"
   endpoint  = module.schedule_service.sqs_queue_arn
 }
 
+# Payment events → schedule-service so it can mark appointments as PAID
+resource "aws_sns_topic_subscription" "schedule_inbox_subscribes_to_payment" {
+  provider  = aws.localstack
+  topic_arn = module.payment_service.sns_topic_arn
+  protocol  = "sqs"
+  endpoint  = module.schedule_service.sqs_queue_arn
+}
+
 resource "aws_sns_topic_subscription" "appointment_inbox_subscribes_to_schedule" {
   provider  = aws.localstack
   topic_arn = module.schedule_service.sns_topic_arn

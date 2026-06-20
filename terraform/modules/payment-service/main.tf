@@ -181,6 +181,9 @@ resource "aws_ecs_task_definition" "task" {
         { name = "PAYU_OAUTH_CLIENT_SECRET",          value = nonsensitive(var.payu_oauth_client_secret) },
         { name = "PAYU_SANDBOX_MODE",                 value = "true" },
         { name = "BASE_URL",                          value = "http://${aws_lb.alb.dns_name}" },
+        { name = "FRONTEND_URL",                      value = "http://${var.project_name}-frontend.s3-website.localhost.localstack.cloud:4566" },
+        { name = "PAYMENT_SNS_TOPIC_ARN",             value = aws_sns_topic.payment_events.arn },
+        { name = "DEBUG",                             value = "True" },
       ]
       logConfiguration = {
         logDriver = "awslogs"
@@ -222,4 +225,8 @@ resource "aws_ecs_service" "service" {
   lifecycle {
     ignore_changes = [availability_zone_rebalancing]
   }
+}
+
+resource "aws_sns_topic" "payment_events" {
+  name = "${local.name}-events"
 }

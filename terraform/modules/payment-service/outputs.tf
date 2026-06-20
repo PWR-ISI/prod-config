@@ -21,3 +21,7 @@ output "ecs_cluster" {
 output "ecs_service" {
   value = aws_ecs_service.service.name
 }
+
+output "sns_topic_arn" {
+  value = aws_sns_topic.payment_events.arn
+}
