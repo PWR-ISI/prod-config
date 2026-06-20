@@ -1,471 +1,217 @@
-# ISI Production Config - Microservices Architecture
+# ISI — Medical System (microservices on LocalStack)
 
-Multi-tenant medical record system with **unified dev/prod configuration**:
-- **Development**: LocalStack emulates all AWS services locally (free, no AWS account needed)
-- **Production**: Same code, same docker-compose.yml, switch via environment variables to real AWS
+A multi-service medical-appointment system: **8 Django REST microservices + a React (Vite)
+SPA**, deployed to **AWS services emulated by LocalStack PRO** in a production-shaped layout
+(ECS Fargate + RDS + ALB + API Gateway + S3 + SNS/SQS + Cognito).
 
-No code changes between dev and production - only configuration.
+Everything lives in this one repo (`prod-config/`). The whole stack is brought up from
+scratch with a single script — see **[SETUP.md](./SETUP.md)** for the exact steps.
 
-## Quick Start
+> The deployment model is **ECS/Fargate emulated by LocalStack**. Each microservice runs as
+> an ECS task (container `ls-ecs-prod-config-<svc>-cluster-…`) behind its own ALB; the SPA is
+> static files served from an S3 website bucket. There is no docker-compose-per-service path.
 
-### 1. Start LocalStack (AWS emulator)
+---
 
-```bash
-docker-compose up -d
+## 1. Architecture
+
+```text
+                          Browser
+                             │
+        ┌────────────────────┼─────────────────────────────────────┐
+        │ (the SPA calls each service's ALB directly via its         │
+        │  VITE_*_SERVICE_URL — see frontend-portal/.env.production)  │
+        ▼                                                            ▼
+ ┌──────────────┐                                          ┌──────────────────┐
+ │  S3 website  │  prod-config-frontend                     │   API Gateway    │
+ │  (React SPA) │  *.s3-website.localhost.localstack.cloud  │ (HTTP API, opt.) │
+ └──────────────┘                                          └──────────────────┘
+        │
+        │  HTTP (Bearer JWT) to per-service Application Load Balancers
+        │  http://prod-config-<svc>-alb.elb.localhost.localstack.cloud:4566
+        ▼
+ ┌───────────────────────────────────────────────────────────────────────────┐
+ │                       ECS Fargate services (one per microservice)           │
+ │  auth │ core(appointment) │ schedule │ payment │ notification │ facility │  │
+ │       │                   │          │         │              │ medical  │  │
+ │       │                   │          │         │              │ audit    │  │
+ └───────────────────────────────────────────────────────────────────────────┘
+        │              │                 │                    │
+        ▼              ▼                 ▼                    ▼
+   RDS Postgres   SNS / SQS          S3 buckets           Cognito
+   (per service)  (domain events)    medical-records,     (user pool —
+                                     user-avatars         auth-identity)
 ```
 
-### 2. Initialize Cognito
+**Request path:** the SPA holds a JWT (from auth-identity) in `localStorage` and sends it as
+`Authorization: Bearer …` to each service's ALB. Every service validates the token with a
+shared **JWT stub** that reads the `sub` / `custom:role` / `email` claims and exposes
+`request.user_id` / `request.user_role` (no per-service Cognito round-trip).
 
-```bash
-cd localstack-init && ./00-bootstrap.sh
-# Note the COGNITO_USER_POOL_ID and COGNITO_APP_CLIENT_ID output
+---
+
+## 2. Microservices
+
+All eight are Django + Django REST Framework. Each has a `Dockerfile` and an
+`entrypoint.sh` that runs migrations on start, then `gunicorn`.
+
+| Folder | ECS cluster base | ECR repo | ALB host (`…elb.localhost.localstack.cloud:4566`) | Responsibility |
+|---|---|---|---|---|
+| `auth-identity-service` | `prod-config-auth` | `prod-config-auth` | `prod-config-auth-alb` | Cognito sign-up/sign-in, users, JWT issuance, `admin/staff` provisioning, profile avatars (S3) |
+| `appointment-service` | `prod-config-core` | `prod-config-core-repo` | `prod-config-core-alb` | "Core" appointment domain + event consumer (not called directly by the SPA) |
+| `schedule-service` | `prod-config-schedule` | `prod-config-schedule-repo` | `prod-config-schedule-alb` | **The SPA's booking backend**: time-slots + appointments; publishes domain events |
+| `payment-service` | `prod-config-payment` | `prod-config-payment-repo` | `prod-config-payment-alb` | PayU payments + refunds (gated by `PAYMENTS_ENABLED`, off by default) |
+| `notification-service` | `prod-config-notification` | `prod-config-notification` | `prod-config-notification-alb` | In-app notifications; internal `/api/v2/events/` ingest endpoint |
+| `facility-staff-service` | `prod-config-facility` | `prod-config-facility` | `prod-config-facility-alb` | Facilities + the **doctor catalog** (specialization, photo, license) |
+| `medical-record-service` | `prod-config-medical` | `prod-config-medical` | `prod-config-medical-alb` | Patient medical documents, uploaded to S3 |
+| `audit-logging-service` | `prod-config-audit` | `prod-config-audit` | `prod-config-audit-alb` | Audit trail |
+
+Cluster = `<base>-cluster`, service = `<base>-svc` (e.g. `prod-config-schedule-cluster` /
+`prod-config-schedule-svc`).
+
+### Frontend — `frontend-portal/`
+React + Vite SPA. Built with a multi-stage Docker build (`--target build` → `/app/dist`),
+then the `dist/` is synced to the **`prod-config-frontend`** S3 website bucket. Service URLs
+are baked in at build time from **`frontend-portal/.env.production`** (`VITE_AUTH_SERVICE_URL`,
+`VITE_SCHEDULE_SERVICE_URL`, `VITE_FACILITY_SERVICE_URL`, `VITE_MEDICAL_RECORD_SERVICE_URL`,
+`VITE_NOTIFICATION_SERVICE_URL`, `VITE_API_URL`).
+
+---
+
+## 3. Roles
+
+`patient`, `doctor`, `staff` (receptionist — shown in the UI as *Recepcjonista*), `admin`.
+The role travels in the JWT and gates both UI panels and server-side permissions.
+
+| Panel | Can do |
+|---|---|
+| **Patient** | Search doctors, book/cancel a visit, "Opłać" (payment placeholder), view own medical documents, notifications |
+| **Doctor** | See today/upcoming/cancelled visits, finish a visit (summary), cancel (reason), **self-service free slots**, attach medical documents, notifications |
+| **Receptionist** (`staff`) | Book on behalf of a patient, cancel, register doctors/patients |
+| **Admin** | All users (create/edit/delete), doctors, facilities, **all appointments**, create accounts (incl. doctor with specialization/license/photo, receptionist with photo) |
+
+---
+
+## 4. Key cross-service flows
+
+- **Auth / identity.** `auth-identity-service` provisions accounts in Cognito + its own RDS,
+  and issues a JWT carrying `sub` (the stable user id used as `patient_id`/`doctor_id`
+  everywhere), `role`, and `email`. `POST /admin/staff/` creates doctor/staff/patient
+  accounts (admin/receptionist only); it optionally accepts a multipart `photo` that is
+  uploaded to the `user-avatars` S3 bucket and stored on the user profile.
+
+- **Doctor catalog linkage.** A doctor is two records kept in sync by id:
+  `auth user.cognito_sub` **==** `facility Doctor.user_id` **==** `schedule slot.doctor_id`.
+  Creating a doctor (admin "Dodaj lekarza" or "Utwórz użytkownika") makes the auth account
+  **and** the facility catalog profile (with specialization). Deleting the user from the admin
+  panel also removes the matching facility profile.
+
+- **Booking.** SPA → `schedule-service` reserves the chosen slot and creates the appointment.
+  The patient view fetches *all* of a doctor's available slots and filters to the selected
+  local day (avoids UTC/local date-boundary issues).
+
+- **Notifications.** When `schedule-service` creates/cancels/completes an appointment it
+  publishes a domain event to SNS **and** posts it directly to
+  `notification-service` `POST /api/v2/events/` (shared internal token). That endpoint reuses
+  the same handlers the SQS consumer would and writes an in-app notification for the patient
+  (and doctor). The 🔔 in the SPA polls unread count + lists notifications.
+  > The SNS→SQS `consume_events` worker exists but is **not** run in the ECS deployment;
+  > the direct `/events/` call is the active path (reliable inter-task call via the ALB).
+
+- **Medical documents.** Doctor/clerk uploads a file via `medical-record-service`, stored in
+  the `medical-records` S3 bucket; the patient sees it under their documentation.
+
+- **Payments.** `payment-service` wraps PayU. `PAYMENTS_ENABLED` defaults to **false**
+  (no credentials), so booking confirms immediately and the patient's "Opłać" button is a
+  placeholder until real PayU keys are supplied.
+
+---
+
+## 5. Data stores (emulated by LocalStack PRO)
+
+- **RDS PostgreSQL** — one database per service (auth, core, schedule, payment, facility,
+  medical, notification, audit). Provisioned by Terraform; each service migrates on startup.
+- **S3** — `prod-config-frontend` (SPA website), `medical-records` (documents),
+  `user-avatars` (profile photos). Document/photo URLs are rewritten to the browser-reachable
+  `http://localhost:4566/<bucket>/<key>`.
+- **Cognito** — user pool/client provisioned by the Terraform `cognito` module; IDs injected
+  into the auth task definition.
+- **SNS / SQS** — domain-event topic + queues (created by `localstack-init/00-bootstrap.sh`).
+
+---
+
+## 6. Repository layout
+
+```text
+prod-config/
+├── docker-compose.yml          # LocalStack PRO (the only long-running compose file)
+├── README.md                   # this file
+├── SETUP.md                    # from-scratch run instructions
+├── localstack-init/            # runs inside LocalStack on startup
+│   ├── 00-bootstrap.sh         #   SQS queues + SNS topic + (optional) Cognito pool
+│   ├── 01-api-gateway.sh
+│   └── ids.env                 #   generated IDs (git-ignored content)
+├── terraform/                  # Infrastructure-as-Code (the real deploy)
+│   ├── main.tf, provider.tf, variables.tf, outputs.tf
+│   └── modules/                #   network, cognito, api-gateway, frontend, sqs,
+│                               #   and one module per microservice (ECR+RDS+ECS+ALB)
+├── scripts/
+│   ├── run-all.ps1             # ★ one-shot deploy (LocalStack→TF→ECR→ECS→S3)
+│   └── deploy-*.ps1 / *.bat    # helper/older scripts
+├── auth-identity-service/      # ┐
+├── appointment-service/        # │
+├── schedule-service/           # │ 8 Django microservices
+├── payment-service/            # │ (each: Dockerfile, entrypoint.sh, manage.py,
+├── notification-service/       # │  requirements.txt, app code, migrations)
+├── facility-staff-service/     # │
+├── medical-record-service/     # │
+├── audit-logging-service/      # ┘
+└── frontend-portal/            # React (Vite) SPA  + .env.production
 ```
 
-### 3. Create .env with Cognito credentials
+---
 
-```bash
-cp .env.example .env
-# Edit .env and add Cognito IDs from step 2
+## 7. Running it
+
+One command from `prod-config/` (Windows PowerShell, Docker Desktop running, LocalStack PRO
+token in `.env`):
+
+```powershell
+.\scripts\run-all.ps1
 ```
 
-### 4. Start Applications Locally
+It performs, in order: **(1)** start LocalStack → **(2)** bootstrap Cognito/SQS/SNS →
+**(3)** build 8 service images → **(4)** `terraform apply` (network, RDS, ECS, ALBs, API
+Gateway, S3, Cognito) → **(5)** push images to ECR → **(6)** roll the ECS services →
+**(7)** seed schedule slots → **(8)** build + sync the SPA to S3.
 
-```bash
-# Each in a separate terminal:
+Re-deploy after code changes without rebuilding infra:
 
-# Terminal 1: Auth service
-cd auth-identity-service
-export $(cat ../.env | grep -v '^#' | xargs)
-python manage.py runserver 8001
-
-# Terminal 2: Appointment service
-cd appointment-service
-export $(cat ../.env | grep -v '^#' | xargs)
-python manage.py runserver 8002
-
-# Terminal 3: Frontend
-cd frontend-portal
-export $(cat ../.env | grep -v '^#' | xargs)
-npm start  # or: npm run dev
+```powershell
+.\scripts\run-all.ps1 -SkipBuild          # reuse images
+.\scripts\run-all.ps1 -SkipSeed -SkipFrontend
 ```
 
-### 5. Open in Browser
-
-```
-http://localhost:3000  # Frontend
-http://localhost:8001  # Auth API
-http://localhost:8002  # Appointment API
-http://localhost:4566  # LocalStack dashboard
-```
-
-**That's it!** All AWS services (Cognito, SNS, SQS, S3, DynamoDB, etc.) are emulated by LocalStack.
-
-## Architecture
-
-```
-┌──────────────────┐
-│   Frontend SPA   │
-│  (Fargate/S3)    │
-└────────┬─────────┘
-         │
-┌────────▼──────────────┐
-│  API Gateway + WAF    │
-│ (Cognito Auth)       │
-└────────┬──────────────┘
-         │
-    ┌────┴────┬────────┬──────────┐
-    │         │        │          │
-    │    Microservices (Fargate)
-    │         │        │          │
-┌───▼──┐  ┌──▼───┐  ┌─▼──┐  ┌────▼────┐
-│Auth  │  │ Appt │  │Sched│  │Payment  │
-│ (min 2 replicas, auto-scaling)
-└──────┴──────────────────────────────┘
-    │
-┌───┴──────────────────────────┐
-│   Data Layer               │
-├──────────────────────────────┤
-│ RDS (PostgreSQL)            │
-│  - Appointment DB           │
-│  - Schedule DB              │
-│  - Payment DB               │
-│  - Medical Records DB       │
-│                             │
-│ DynamoDB                    │
-│  - Notifications            │
-│  - Facility Data            │
-│  - Audit Logs               │
-│                             │
-│ S3                          │
-│  - Medical Documents        │
-│  - File Uploads             │
-│                             │
-│ SNS/SQS                     │
-│  - Event Bus                │
-│  - Async Processing         │
-└─────────────────────────────┘
-```
-
-## Services
-
-### Backend Microservices
-
-#### 1. **Auth Identity Service**
-- User authentication & authorization
-- AWS Cognito integration
-- JWT token management
-- Port: 8001 (local) / ALB (production)
-
-#### 2. **Appointment Service**
-- Manage medical appointments
-- Schedule integration
-- Database: PostgreSQL (RDS)
-- Port: 8002 (local)
-
-#### 3. **Schedule Service**
-- Doctor/facility schedules
-- Time slot management
-- Database: PostgreSQL (RDS)
-- Port: 8003 (local)
-
-#### 4. **Payment Service**
-- Payment processing
-- PayU integration
-- Transaction history
-- Database: PostgreSQL (RDS)
-- Port: 8004 (local)
-
-#### 5. **Notification Service**
-- Email, SMS, push notifications
-- AWS SNS integration
-- History tracking (DynamoDB)
-- Port: 8005 (local)
-
-#### 6. **Facility Staff Service**
-- Manage facilities and staff
-- Staff roles & permissions
-- Database: DynamoDB
-- Port: 8006 (local)
-
-#### 7. **Medical Record Service**
-- Electronic health records
-- Document storage (S3)
-- Database: PostgreSQL (RDS)
-- Port: 8007 (local)
-
-#### 8. **Audit Logging Service**
-- Compliance & audit trail
-- All system events logged
-- Database: DynamoDB + CloudWatch Logs
-- Port: 8008 (local)
-
-### Frontend
-
-- React SPA with Vite/Webpack build
-- Deployed to S3 + CloudFront
-- Cognito authentication
-- Port: 3000 (local) / CloudFront (production)
-
-## Development
-
-### Prerequisites
-
-- Docker & Docker Compose
-- Python 3.11+
-- Node.js 18+
-- AWS CLI (for production deployment)
-- Terraform 1.5+
-
-### Project Structure
-
-```
-.
-├── auth-identity-service/          # Django service
-├── appointment-service/            # Django service
-├── schedule-service/               # Django service
-├── payment-service/                # Django service
-├── notification-service/           # Django service
-├── facility-staff-service/         # Django service
-├── medical-record-service/         # Django service
-├── audit-logging-service/          # Django service
-├── frontend-portal/                # React SPA
-├── terraform/                      # IaC for AWS
-│   ├── modules/
-│   │   ├── network/               # VPC, subnets, security groups
-│   │   ├── cognito/               # User pool, app client
-│   │   ├── *-service/             # Service-specific (RDS, ECS, etc)
-│   │   ├── api-gateway/           # API Gateway + integration
-│   │   ├── frontend/              # S3 + CloudFront
-│   │   └── sqs/                   # SQS queues
-│   ├── main.tf
-│   ├── provider.tf
-│   ├── variables.tf
-│   ├── outputs.tf
-│   └── envs/
-│       ├── local.tfvars           # LocalStack dev config
-│       └── prod.tfvars            # Production config
-├── localstack-init/               # LocalStack initialization scripts
-├── scripts/                       # Helper scripts
-│   ├── local-dev-setup.sh
-│   ├── build-and-push-ecr.sh
-│   └── deploy-fargate.sh
-├── docker-compose.yml             # Local dev (with LocalStack)
-├── docker-compose.prod.yml        # Production reference (ECS task defs)
-├── DEPLOYMENT.md                  # Detailed deployment guide
-└── README.md                      # This file
-```
-
-### Local Development Workflow
-
-```bash
-# 1. Start services
-./scripts/local-dev-setup.sh start
-
-# 2. View logs
-./scripts/local-dev-setup.sh logs appointment-service
-
-# 3. Make code changes
-# (Services will auto-reload in development)
-
-# 4. Test API
-curl http://localhost:8002/appointments/
-
-# 5. Stop when done
-./scripts/local-dev-setup.sh stop
-
-# 6. Clean local data (optional)
-./scripts/local-dev-setup.sh clean
-```
-
-### Environment Variables
-
-#### Local Development (.env)
-
-```bash
-AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=test
-AWS_SECRET_ACCESS_KEY=test
-AWS_ENDPOINT_URL=http://localhost:4566
-LOCALSTACK_AUTH_TOKEN=your-token
-COGNITO_USER_POOL_ID=...
-COGNITO_APP_CLIENT_ID=...
-```
-
-#### Production (.env.prod)
-
-```bash
-AWS_ACCOUNT_ID=123456789012
-AWS_REGION=us-east-1
-PROJECT_NAME=isi-prod-config
-RDS_APPOINTMENT_ENDPOINT=...
-RDS_SCHEDULE_ENDPOINT=...
-... (see .env.prod.example for all variables)
-```
-
-## Database
-
-### RDS Instances (PostgreSQL)
-
-- **Appointment DB**: `appointment_db`
-- **Schedule DB**: `schedule_db`
-- **Payment DB**: `payment_db`
-- **Medical Records DB**: `medical_db`
-
-All in same DB subnet group in private subnets.
-
-### DynamoDB Tables
-
-- `isi-prod-notifications` - Notification history
-- `isi-prod-facility` - Facility & staff data
-- `isi-prod-audit-logs` - Audit trail
-
-### S3 Buckets
-
-- `isi-prod-medical-records` - Electronic health records
-- `isi-prod-files` - General file uploads
-
-## Deployment
-
-### To LocalStack (Development)
-
-```bash
-./scripts/local-dev-setup.sh start
-```
-
-### To AWS Fargate (Production)
-
-Full guide: see [DEPLOYMENT.md](./DEPLOYMENT.md)
-
-```bash
-# Prepare
-cp .env.prod.example .env.prod
-# ... edit .env.prod ...
-
-# Build images
-./scripts/build-and-push-ecr.sh prod all
-
-# Deploy
-ENVIRONMENT=prod ./scripts/deploy-fargate.sh apply
-```
-
-## Auto-Scaling
-
-Each service is configured with:
-- **Minimum tasks**: 2 (for redundancy)
-- **Maximum tasks**: 5-10 (depends on service)
-- **Scale-out trigger**: CPU >70% or Memory >80%
-- **Scale-in trigger**: CPU <30% or Memory <40%
-
-Scaling policies are defined in Terraform modules.
-
-## Monitoring & Logging
-
-### CloudWatch
-
-```bash
-# View logs for a service
-aws logs tail /ecs/isi-prod-appointment-service --follow
-
-# View metrics
-aws cloudwatch get-metric-statistics \
-  --namespace AWS/ECS \
-  --metric-name CPUUtilization \
-  --dimensions Name=ServiceName,Value=appointment-service \
-  --start-time 2024-05-23T10:00:00Z \
-  --end-time 2024-05-23T11:00:00Z \
-  --period 300 \
-  --statistics Average
-```
-
-### Health Checks
-
-Each service has `/health` endpoint for:
-- ECS task health checks
-- Load balancer target health
-- Manual monitoring
-
-## Security
-
-### Authentication
-- AWS Cognito for user management
-- JWT tokens for API calls
-- API Gateway authorizer
-
-### Database
-- RDS in private subnets (no internet access)
-- Secrets Manager for credentials
-- Encrypted backups
-
-### Network
-- VPC with private/public subnets
-- Security groups for each layer
-- WAF on API Gateway (optional)
-
-### Secrets Management
-
-Store sensitive credentials in AWS Secrets Manager:
-
-```bash
-# Create a secret
-aws secretsmanager create-secret \
-  --name prod/appointment/db \
-  --secret-string '{"username":"user","password":"pass"}'
-
-# Reference in Fargate task definition
-# (automatically handled by Terraform)
-```
-
-## Contributing
-
-1. Create a feature branch: `git checkout -b feature/your-feature`
-2. Make changes to your service
-3. Test locally: `./scripts/local-dev-setup.sh start`
-4. Commit with clear messages
-5. Push and create pull request
-
-### Running Tests
-
-```bash
-# Local (with docker-compose running)
-docker-compose exec appointment-service python manage.py test
-
-# Or manually:
-cd appointment-service
-python manage.py test
-```
-
-## Troubleshooting
-
-### Services Not Starting
-
-```bash
-# Check logs
-./scripts/local-dev-setup.sh logs
-
-# Restart all
-./scripts/local-dev-setup.sh stop
-./scripts/local-dev-setup.sh start
-```
-
-### Database Connection Error
-
-```bash
-# Check if postgres containers are healthy
-docker-compose ps
-
-# Check connection string in .env
-cat .env | grep DJANGO_DB
-```
-
-### Frontend Not Loading
-
-```bash
-# Check if frontend service is running
-curl http://localhost:3000
-
-# Check frontend logs
-./scripts/local-dev-setup.sh logs frontend-portal
-```
-
-### Production Issues
-
-See [DEPLOYMENT.md](./DEPLOYMENT.md) troubleshooting section.
-
-## Cost Estimation
-
-### Development (LocalStack)
-- Free (all local)
-
-### Production (Fargate + RDS)
-Approximate monthly costs:
-
-| Resource | Estimate |
-|----------|----------|
-| Fargate (9 services × 2-4 tasks) | $500-1500 |
-| RDS (4 instances, multi-AZ) | $1500-3000 |
-| DynamoDB (on-demand) | $200-500 |
-| S3 (storage + CDN) | $50-200 |
-| NAT Gateway | $45 |
-| API Gateway | $50-200 |
-| **Total** | **~$2500-5500/month** |
-
-*Use Reserved Instances and Savings Plans for 20-40% savings*
-
-## Support & Documentation
-
-- [AWS ECS Documentation](https://docs.aws.amazon.com/ecs/)
-- [Terraform AWS Provider](https://registry.terraform.io/providers/hashicorp/aws/latest)
-- [LocalStack Documentation](https://docs.localstack.cloud/)
-- [Django Documentation](https://docs.djangoproject.com/)
-- [React Documentation](https://react.dev/)
-
-## License
-
-[Your License Here]
-
-## Team
-
-- **Architecture**: WhiteStorm
-- **DevOps/Infrastructure**: Team
-- **Backend Services**: Team
-- **Frontend**: Team
+Full step-by-step (prerequisites, demo accounts, verification, teardown, troubleshooting) is
+in **[SETUP.md](./SETUP.md)**.
+
+### Endpoints after a run
+- **SPA:** `http://prod-config-frontend.s3-website.localhost.localstack.cloud:4566`
+- **Auth ALB:** `http://prod-config-auth-alb.elb.localhost.localstack.cloud:4566/api/v2/health/`
+- **Schedule ALB:** `http://prod-config-schedule-alb.elb.localhost.localstack.cloud:4566/health/`
+- **LocalStack health:** `http://localhost:4566/_localstack/health`
+
+---
+
+## 8. Notes
+
+- **Single image deploy.** To redeploy one service: build & tag to
+  `000000000000.dkr.ecr.us-east-1.localhost.localstack.cloud:4566/<repo>:latest`, `docker push`,
+  then `aws ecs update-service --cluster <base>-cluster --service <base>-svc --force-new-deployment`.
+- **Inter-service calls** use the ALB DNS (resolves to the LocalStack edge, reachable from
+  inside tasks). They do **not** use host ports.
+- **Migrations** run from each service's `entrypoint.sh` on container start; new columns added
+  to an already-applied `0001` migration are not picked up automatically — add a real
+  migration or `ALTER TABLE` once.
+- **LocalStack PRO is required** (RDS, ECS, ECR, Cognito, ALB are PRO features); set
+  `LOCALSTACK_AUTH_TOKEN` in `prod-config/.env`.

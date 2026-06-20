@@ -1,11 +1,9 @@
 # LocalStack: Emulates all AWS services (Cognito, RDS, DynamoDB, S3, SNS, SQS, ECS, ECR, etc.)
 # Applications connect to LocalStack endpoint: http://localhost:4566
 #
-# This config supports BOTH run paths:
-#   - run-all.ps1  : full ECS/Fargate model (needs ecr, ecs, rds, elbv2, apigatewayv2,
-#                    ec2/VPC) and Docker-in-Docker (docker.sock) so LocalStack can spawn
-#                    ECS task + RDS containers.
-#   - start_demo.ps1 : lightweight demo (only uses s3/sns/sqs/cognito), works fine here too.
+# Used by scripts/run-all.ps1: the full ECS/Fargate model (needs ecr, ecs, rds, elbv2,
+# apigatewayv2, ec2/VPC) and Docker-in-Docker (docker.sock) so LocalStack can spawn
+# ECS task + RDS containers on the host Docker engine.
 services:
   localstack:
     image: localstack/localstack-pro:latest
