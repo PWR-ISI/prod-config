@@ -17,3 +17,11 @@ output "sqs_queue_url" {
 output "sqs_queue_arn" {
   value = aws_sqs_queue.schedule_inbox.arn
 }
+
+output "ecs_cluster" {
+  value = aws_ecs_cluster.cluster.name
+}
+
+output "ecs_service" {
+  value = aws_ecs_service.service.name
+}

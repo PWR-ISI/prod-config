@@ -1,14 +1,23 @@
-output "queue_urls" {
-  description = "Map of service name -> SQS queue URL"
-  value       = { for k, q in aws_sqs_queue.service : k => q.url }
+output "queue_arns" {
+  description = "SQS queue ARNs keyed by service name"
+  value = {
+    for service, queue in aws_sqs_queue.service :
+    service => queue.arn
+  }
 }
 
-output "queue_arns" {
-  description = "Map of service name -> SQS queue ARN"
-  value       = { for k, q in aws_sqs_queue.service : k => q.arn }
+output "queue_urls" {
+  description = "SQS queue URLs keyed by service name"
+  value = {
+    for service, queue in aws_sqs_queue.service :
+    service => queue.id
+  }
 }
 
 output "dlq_arns" {
-  description = "Map of service name -> dead-letter queue ARN"
-  value       = { for k, q in aws_sqs_queue.service_dlq : k => q.arn }
+  description = "SQS DLQ ARNs keyed by service name"
+  value = {
+    for service, queue in aws_sqs_queue.service_dlq :
+    service => queue.arn
+  }
 }
