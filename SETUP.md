@@ -131,6 +131,89 @@ the supported path and keeps the doctor catalog correctly linked
 Log in as the doctor → **Mój grafik → + Dodaj wolne terminy** → pick a day and hours. These
 become bookable for patients immediately.
 
+### 4e. Facility + lekarz + sloty — seeding przez API
+
+Alternatywa dla panelu admina (§4b/§4c): tworzy placówkę, konto lekarza i jego profil,
+a następnie wszystkie 16 slotów na **30.06.2026** (wtorek, 09:00–17:00 co 30 min) — w pełni
+przez REST API z PowerShella. Wymaga, by wcześniej istniało konto **admin@isi.test** (§4a).
+
+```powershell
+$AUTH     = "http://prod-config-auth-alb.elb.localhost.localstack.cloud:4566/api/v2"
+$FACILITY = "http://prod-config-facility-alb.elb.localhost.localstack.cloud:4566/api/v2"
+$SCHEDULE = "http://prod-config-schedule-alb.elb.localhost.localstack.cloud:4566/api/v1"
+
+# 1. Zaloguj admina
+$tok = (Invoke-RestMethod -Uri "$AUTH/auth/login/" -Method Post `
+    -ContentType 'application/json' `
+    -Body (@{ email = "admin@isi.test"; password = "Admin123!" } | ConvertTo-Json)).access_token
+$H = @{ Authorization = "Bearer $tok" }
+
+# 2. Utwórz placówkę (zwraca integer id)
+$fac = Invoke-RestMethod -Uri "$FACILITY/facilities/" -Method Post `
+    -ContentType 'application/json' -Headers $H `
+    -Body (@{
+        name    = "ISI Medical Clinic"
+        address = "ul. Przykładowa 1"
+        city    = "Warszawa"
+        phone   = "+48 22 000 0000"
+        email   = "kontakt@isi.test"
+    } | ConvertTo-Json)
+$facId = $fac.id
+Write-Host "Facility id: $facId"
+
+# 3. Utwórz konto lekarza w auth-service; zwraca user_id = cognito_sub (UUID)
+$doctorUserId = (Invoke-RestMethod -Uri "$AUTH/admin/staff/" -Method Post `
+    -ContentType 'application/json' -Headers $H `
+    -Body (@{
+        email      = "kardiolog@isi.test"
+        password   = "Doctor123!"
+        first_name = "Jan"
+        last_name  = "Nowak"
+        role       = "doctor"
+    } | ConvertTo-Json)).user_id
+Write-Host "Doctor user_id (cognito_sub): $doctorUserId"
+
+# 4. Utwórz profil lekarza w facility-service (JSON — DoctorViewSet obsługuje JSONParser)
+Invoke-RestMethod -Uri "$FACILITY/doctors/" -Method Post `
+    -ContentType 'application/json' -Headers $H `
+    -Body (@{
+        user_id        = $doctorUserId
+        email          = "kardiolog@isi.test"
+        first_name     = "Jan"
+        last_name      = "Nowak"
+        specialization = "Kardiolog"
+        license_number = "KRD-001"
+        facility_id    = $facId
+    } | ConvertTo-Json) | Out-Null
+Write-Host "Doctor profile created in facility-service."
+
+# 5. Utwórz 16 slotów na 30.06.2026 (09:00–17:00 co 30 min)
+# Uwaga: facility_id w schedule-service to UUID (niezależny od integer id z facility-service)
+$slotDate = "2026-06-30"
+$SFAC     = "00000000-0000-0000-0000-000000000001"
+0..15 | ForEach-Object {
+    $sm   = 540 + $_ * 30          # minuty od północy: 540 = 09:00
+    $em   = $sm + 30
+    $sh   = [math]::Floor($sm / 60);  $smin = $sm % 60
+    $eh   = [math]::Floor($em / 60);  $emin = $em % 60
+    $st   = "$slotDate`T$('{0:00}:{1:00}:00' -f $sh, $smin)"
+    $et   = "$slotDate`T$('{0:00}:{1:00}:00' -f $eh, $emin)"
+    $body = @{
+        doctor_id   = $doctorUserId
+        facility_id = $SFAC
+        start_time  = $st
+        end_time    = $et
+    } | ConvertTo-Json
+    Invoke-RestMethod -Uri "$SCHEDULE/slots" -Method Post `
+        -ContentType 'application/json' -Headers $H -Body $body | Out-Null
+}
+Write-Host "✓ Seeded 16 slots for kardiolog@isi.test on $slotDate"
+```
+
+> **Uwaga:** `facility_id` w schedule-service to UUID przechowywany bez walidacji FK — nie
+> odpowiada bezpośrednio integer `id` z facility-service. Powyższy skrypt używa stałego
+> placeholder UUID `00000000-…-0001`.
+
 ### 4d. (optional) Demo medical records
 
 ```powershell
@@ -176,7 +259,86 @@ More ready-made API checks are in **`api-test-commands.txt`**.
 
 ---
 
-## 7. Teardown / reset
+## 7. PayU payments (ngrok webhook)
+
+PayU sandbox needs a public HTTPS URL to send the payment webhook back to the payment-service.
+Use **ngrok** to expose LocalStack port 4566 with a static domain.
+
+### 7a. Prerequisites
+
+- Free ngrok account at [ngrok.com](https://ngrok.com) with a **static domain** (one free domain per account).
+- `ngrok` installed and authenticated (`ngrok config add-authtoken <TOKEN>`).
+
+### 7b. Start ngrok
+
+```powershell
+ngrok http `
+  --url=<YOUR-STATIC-DOMAIN>.ngrok-free.app `
+  --host-header="prod-config-payment-alb.elb.localhost.localstack.cloud" `
+  4566
+```
+
+> `--host-header` is critical — it tells LocalStack's ALB which service to route the request to.
+> Without it the ALB returns 503 and PayU retries for 60 s before giving up.
+
+### 7c. Configure payment-service
+
+Set `BASE_URL` in `payment-service/.env` to the ngrok domain:
+
+```ini
+BASE_URL=https://<YOUR-STATIC-DOMAIN>.ngrok-free.app
+```
+
+Then rebuild and redeploy the payment-service so the new `BASE_URL` is baked into the container
+(ECS env vars come from the image via `.env`, not from Terraform at runtime):
+
+```powershell
+$Reg  = "000000000000.dkr.ecr.us-east-1.localhost.localstack.cloud:4566"
+$env:AWS_ACCESS_KEY_ID="test"; $env:AWS_SECRET_ACCESS_KEY="test"; $env:AWS_DEFAULT_REGION="us-east-1"
+aws ecr get-login-password --endpoint-url http://localhost:4566 | docker login --username AWS --password-stdin $Reg
+docker build -t "$Reg/prod-config-payment-repo:latest" .\payment-service
+docker push "$Reg/prod-config-payment-repo:latest"
+aws ecs update-service --cluster prod-config-payment-cluster --service prod-config-payment-svc --force-new-deployment --endpoint-url http://localhost:4566
+```
+
+### 7d. How the flow works
+
+```
+Patient clicks "Zapłać"
+  → frontend → payment-service creates PayU order (notifyUrl = https://<ngrok>/api/payments/webhook)
+  → patient redirected to PayU sandbox page
+  → patient pays
+  → PayU POST https://<ngrok>/api/payments/webhook
+  → ngrok → LocalStack ALB → payment-service → publishes payment.succeeded to SNS
+  → SNS → schedule-service SQS → consume_events → appointment.status = PAID
+```
+
+### 7e. Manual webhook (fallback if ngrok is down)
+
+If ngrok is not running, you can trigger the webhook manually after paying on PayU:
+
+```powershell
+$orderId = "PAYU-ORDER-ID-FROM-PAYU-DASHBOARD"
+$body = @{
+    order = @{
+        orderId      = $orderId
+        orderStatus  = "COMPLETED"
+        totalAmount  = "10000"
+        currencyCode = "PLN"
+    }
+} | ConvertTo-Json -Depth 3
+
+Invoke-RestMethod `
+  -Uri "http://prod-config-payment-alb.elb.localhost.localstack.cloud:4566/api/payments/webhook" `
+  -Method POST `
+  -Body $body `
+  -ContentType "application/json" `
+  -Headers @{ "OpenPayU-Signature" = "sender=checkout;signature=skip;algorithm=MD5;content=DOCUMENT" }
+```
+
+---
+
+## 8. Teardown / reset
 
 ```powershell
 # stop everything (keeps emulated AWS state on disk: localstack-data/, PERSISTENCE=1)
