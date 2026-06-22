@@ -31,17 +31,20 @@ output "auth_service_alb_dns" {
   value = module.auth_service.alb_dns
 }
 
-# ── Appointment service ────────────────────────────────────────────────────────
-output "appointment_service_alb_dns" {
-  value = module.appointment_service.alb_dns
+# ── Appointment Lambda ────────────────────────────────────────────────────────
+output "appointment_lambda_api_endpoint" {
+  description = "API Gateway HTTP API endpoint for appointment Lambda functions"
+  value       = module.appointment_lambda.api_endpoint
 }
 
-output "appointment_service_db_endpoint" {
-  value = module.appointment_service.db_endpoint
+output "appointment_lambda_function_arns" {
+  description = "ARNs of all appointment Lambda functions"
+  value       = module.appointment_lambda.function_arns
 }
 
-output "appointment_ecr_repository_url" {
-  value = module.appointment_service.ecr_repository_url
+output "appointment_db_endpoint" {
+  description = "RDS endpoint for the appointment (coredb) database"
+  value       = module.appointment_lambda.db_endpoint
 }
 
 # ── Payment service ────────────────────────────────────────────────────────────

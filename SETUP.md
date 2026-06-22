@@ -62,16 +62,17 @@ cd "<...>\ISI\prod-config"
 .\scripts\run-all.ps1
 ```
 
-A full run is heavy (**~20–40 min**: 8 image builds + 7 RDS instances). It performs:
+A full run is heavy (**~20–40 min**: 7 ECS image builds + 7 RDS instances + Lambda zip). It performs:
 
 | Step | What happens |
 |------|--------------|
 | 1. Start LocalStack | `docker compose up -d` → waits for `prod-localstack` healthy |
 | 2. Bootstrap | `localstack-init/00-bootstrap.sh` → SQS queues + SNS topic (+ Cognito if available) |
-| 3. Build images | builds 8 service images, tagged to the LocalStack ECR registry |
-| 4. `terraform apply` | network, **Cognito**, **RDS** (per service), **ECS** clusters/services, **ALBs**, **API Gateway**, **S3** |
-| 5. ECR push | `aws ecr get-login-password … \| docker login` then pushes all 8 images |
-| 6. Roll ECS | `aws ecs update-service --force-new-deployment` for each service; waits ~90 s for tasks to start + migrate |
+| 2.5. Build Lambda zip | `.\scripts\build-lambda.ps1` → packages `lambda/appointment/` into `function.zip` for Terraform |
+| 3. Build images | builds 7 ECS service images (appointment-service replaced by Lambda); tagged to LocalStack ECR |
+| 4. `terraform apply` | network, **Cognito**, **RDS** (per service), **ECS** clusters/services, **ALBs**, **Lambda** (appointment), **API Gateway** (HTTP v2), **S3** |
+| 5. ECR push | `aws ecr get-login-password … \| docker login` then pushes all 7 images |
+| 6. Roll ECS | `aws ecs update-service --force-new-deployment` for each ECS service; waits ~90 s for tasks to start + migrate |
 | 7. Seed slots | runs `manage.py seed_slots` in the schedule task |
 | 8. Frontend | builds the SPA (`--target build`), extracts `dist/`, `aws s3 sync … s3://prod-config-frontend` |
 

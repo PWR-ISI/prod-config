@@ -111,21 +111,20 @@ module "audit_service" {
   cognito_user_pool_id  = module.cognito.user_pool_id
 }
 
-module "appointment_service" {
-  source    = "./modules/appointment-service"
+module "appointment_lambda" {
+  source    = "./modules/appointment-lambda"
   providers = { aws = aws.localstack }
 
   project_name          = var.project_name
   region                = var.region
   vpc_id                = module.network.vpc_id
-  public_subnets        = module.network.public_subnets
   private_subnets       = module.network.private_subnets
   db_subnets            = module.network.db_subnets
   ecs_security_group_id = module.network.ecs_sg_id
   db_security_group_id  = module.network.db_sg_id
   db_username           = var.db_username
   db_password           = var.db_password
-  sqs_app_events_url    = module.notification_service.sqs_app_events_url
+  notification_sqs_url  = module.notification_service.sqs_app_events_url
   cognito_user_pool_id  = module.cognito.user_pool_id
 }
 
@@ -176,21 +175,8 @@ module "frontend" {
 # Each service module owns its own SNS topic (publish) and SQS inbox (consume).
 # Subscriptions are declared here to avoid circular module dependencies.
 
-# schedule-service receives appointment events (slot booking, cancellation)
-resource "aws_sns_topic_subscription" "schedule_inbox_subscribes_to_appointment" {
-  provider  = aws.localstack
-  topic_arn = module.appointment_service.sns_topic_arn
-  protocol  = "sqs"
-  endpoint  = module.schedule_service.sqs_queue_arn
-}
-
-# notification-service receives all domain events to create in-app + email notifications
-resource "aws_sns_topic_subscription" "notification_subscribes_to_appointment" {
-  provider  = aws.localstack
-  topic_arn = module.appointment_service.sns_topic_arn
-  protocol  = "sqs"
-  endpoint  = module.notification_service.sqs_app_events_arn
-}
+# appointment-service ECS removed — Lambda publishes directly to notification SQS.
+# schedule and notification subscriptions to appointment SNS are no longer needed.
 
 resource "aws_sns_topic_subscription" "notification_subscribes_to_payment" {
   provider  = aws.localstack
@@ -214,9 +200,4 @@ resource "aws_sns_topic_subscription" "schedule_inbox_subscribes_to_payment" {
   endpoint  = module.schedule_service.sqs_queue_arn
 }
 
-resource "aws_sns_topic_subscription" "appointment_inbox_subscribes_to_schedule" {
-  provider  = aws.localstack
-  topic_arn = module.schedule_service.sns_topic_arn
-  protocol  = "sqs"
-  endpoint  = module.appointment_service.sqs_queue_arn
-}
+# appointment_inbox_subscribes_to_schedule removed — appointment ECS no longer exists.

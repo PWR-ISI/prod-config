@@ -92,24 +92,6 @@ resource "aws_cloudwatch_metric_alarm" "ecs_running_tasks_auth" {
   }
 }
 
-resource "aws_cloudwatch_metric_alarm" "ecs_running_tasks_appointment" {
-  provider            = aws.localstack
-  alarm_name          = "${var.project_name}-appointment-running-tasks"
-  comparison_operator = "LessThanThreshold"
-  evaluation_periods  = "2"
-  metric_name         = "RunningCount"
-  namespace           = "AWS/ECS"
-  period              = "60"
-  statistic           = "Average"
-  threshold           = "1"
-  alarm_description   = "appointment-service: Running task count below desired"
-  alarm_actions       = [aws_sns_topic.alarms.arn]
-
-  dimensions = {
-    ClusterName = module.appointment_service.ecs_cluster
-    ServiceName = module.appointment_service.ecs_service
-  }
-}
 
 resource "aws_cloudwatch_metric_alarm" "ecs_running_tasks_schedule" {
   provider            = aws.localstack
@@ -229,7 +211,7 @@ resource "aws_cloudwatch_metric_alarm" "ecs_running_tasks_audit" {
 # Alert when task CPU is high
 resource "aws_cloudwatch_metric_alarm" "ecs_cpu_high" {
   provider            = aws.localstack
-  for_each            = toset(["auth", "appointment", "schedule", "payment", "notification", "facility", "medical", "audit"])
+  for_each            = toset(["auth", "schedule", "payment", "notification", "facility", "medical", "audit"])
   alarm_name          = "${var.project_name}-${each.key}-cpu-high"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = "3"
@@ -251,7 +233,7 @@ resource "aws_cloudwatch_metric_alarm" "ecs_cpu_high" {
 # Alert when task memory is high
 resource "aws_cloudwatch_metric_alarm" "ecs_memory_high" {
   provider            = aws.localstack
-  for_each            = toset(["auth", "appointment", "schedule", "payment", "notification", "facility", "medical", "audit"])
+  for_each            = toset(["auth", "schedule", "payment", "notification", "facility", "medical", "audit"])
   alarm_name          = "${var.project_name}-${each.key}-memory-high"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = "3"
@@ -423,6 +405,32 @@ resource "aws_cloudwatch_dashboard" "main" {
           yAxis  = { left = { min = 0 } }
         }
       },
+      {
+        type = "metric"
+        properties = {
+          metrics = [
+            for name in values(module.appointment_lambda.function_names) :
+            ["AWS/Lambda", "Errors", "FunctionName", name, { stat = "Sum", label = name }]
+          ]
+          period = 60
+          region = var.region
+          title  = "Lambda Errors (appointment functions)"
+          yAxis  = { left = { min = 0 } }
+        }
+      },
+      {
+        type = "metric"
+        properties = {
+          metrics = [
+            for name in values(module.appointment_lambda.function_names) :
+            ["AWS/Lambda", "Duration", "FunctionName", name, { stat = "p95", label = name }]
+          ]
+          period = 300
+          region = var.region
+          title  = "Lambda Duration p95 ms (appointment functions)"
+          yAxis  = { left = { min = 0 } }
+        }
+      },
     ]
   })
 }
@@ -430,17 +438,17 @@ resource "aws_cloudwatch_dashboard" "main" {
 # ── Locals for ECS cluster/service mappings ────────────────────────────────────
 locals {
   ecs_clusters = {
-    auth        = { cluster = module.auth_service.ecs_cluster, service = module.auth_service.ecs_service }
-    appointment = { cluster = module.appointment_service.ecs_cluster, service = module.appointment_service.ecs_service }
-    schedule    = { cluster = module.schedule_service.ecs_cluster, service = module.schedule_service.ecs_service }
-    payment     = { cluster = module.payment_service.ecs_cluster, service = module.payment_service.ecs_service }
+    auth         = { cluster = module.auth_service.ecs_cluster,         service = module.auth_service.ecs_service }
+    schedule     = { cluster = module.schedule_service.ecs_cluster,     service = module.schedule_service.ecs_service }
+    payment      = { cluster = module.payment_service.ecs_cluster,      service = module.payment_service.ecs_service }
     notification = { cluster = module.notification_service.ecs_cluster, service = module.notification_service.ecs_service }
-    facility    = { cluster = module.facility_service.ecs_cluster, service = module.facility_service.ecs_service }
-    medical     = { cluster = module.medical_service.ecs_cluster, service = module.medical_service.ecs_service }
-    audit       = { cluster = module.audit_service.ecs_cluster, service = module.audit_service.ecs_service }
+    facility     = { cluster = module.facility_service.ecs_cluster,     service = module.facility_service.ecs_service }
+    medical      = { cluster = module.medical_service.ecs_cluster,      service = module.medical_service.ecs_service }
+    audit        = { cluster = module.audit_service.ecs_cluster,        service = module.audit_service.ecs_service }
   }
 
   rds_instances = {
+    # appointment RDS stays; Lambda uses the same coredb instance
     auth        = { identifier = "terraform-${var.project_name}-auth-instance" }
     appointment = { identifier = "terraform-${var.project_name}-core-instance" }
     schedule    = { identifier = "terraform-${var.project_name}-schedule-instance" }
@@ -448,5 +456,91 @@ locals {
     facility    = { identifier = "terraform-${var.project_name}-facility-instance" }
     medical     = { identifier = "terraform-${var.project_name}-medical-instance" }
     audit       = { identifier = "terraform-${var.project_name}-audit-instance" }
+  }
+}
+
+# ── Notification-service health alarm ─────────────────────────────────────────
+# SQS messages failing after maxReceiveCount retries land in the DLQ, which
+# signals notification-service processing errors without needing a custom metric.
+# This DLQ alarm is the primary indicator of notification-service failures.
+# The ECS task-count alarm (above) covers infrastructure-level outages.
+resource "aws_cloudwatch_metric_alarm" "notification_sqs_dlq" {
+  provider            = aws.localstack
+  alarm_name          = "${var.project_name}-notification-processing-errors"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  alarm_description   = "notification-service: messages in DLQ indicate processing failures"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+
+  dimensions = {
+    QueueName = "${var.project_name}-app-events-dlq"
+  }
+}
+
+# ── Lambda Error Rate Alarms ───────────────────────────────────────────────────
+# Any Lambda error is unusual; alert immediately (1 evaluation period = 1 error).
+resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
+  provider            = aws.localstack
+  for_each            = module.appointment_lambda.function_names
+  alarm_name          = "${var.project_name}-lambda-${each.key}-errors"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  alarm_description   = "Lambda ${each.key}: at least one execution error"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+
+  dimensions = {
+    FunctionName = each.value
+  }
+}
+
+# ── Lambda Duration Alarms ─────────────────────────────────────────────────────
+# DB calls from Lambda can be slow; 20 s threshold (Lambda timeout = 30 s)
+# gives a buffer to detect pathological queries before functions start timing out.
+resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
+  provider            = aws.localstack
+  for_each            = module.appointment_lambda.function_names
+  alarm_name          = "${var.project_name}-lambda-${each.key}-duration"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "Duration"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  extended_statistic  = "p95"
+  threshold           = 20000
+  alarm_description   = "Lambda ${each.key}: p95 duration > 20 s"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+
+  dimensions = {
+    FunctionName = each.value
+  }
+}
+
+# ── Lambda Throttle Alarms ─────────────────────────────────────────────────────
+resource "aws_cloudwatch_metric_alarm" "lambda_throttles" {
+  provider            = aws.localstack
+  for_each            = module.appointment_lambda.function_names
+  alarm_name          = "${var.project_name}-lambda-${each.key}-throttles"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Throttles"
+  namespace           = "AWS/Lambda"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 1
+  alarm_description   = "Lambda ${each.key}: throttled (concurrency limit hit)"
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+
+  dimensions = {
+    FunctionName = each.value
   }
 }

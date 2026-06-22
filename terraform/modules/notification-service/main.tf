@@ -285,16 +285,34 @@ resource "aws_sqs_queue" "app_events" {
   })
 }
 
+data "aws_caller_identity" "current" {}
+
 resource "aws_sqs_queue_policy" "app_events_policy" {
   queue_url = aws_sqs_queue.app_events.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { Service = "sns.amazonaws.com" }
-      Action    = "sqs:SendMessage"
-      Resource  = aws_sqs_queue.app_events.arn
-    }]
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = { Service = "sns.amazonaws.com" }
+        Action    = "sqs:SendMessage"
+        Resource  = aws_sqs_queue.app_events.arn
+      },
+      # Lambda publishes notification events directly (no SNS hop).
+      # Wildcarding the account lets us avoid a circular module dependency
+      # between notification-service and appointment-lambda modules.
+      {
+        Effect    = "Allow"
+        Principal = { AWS = "*" }
+        Action    = "sqs:SendMessage"
+        Resource  = aws_sqs_queue.app_events.arn
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          }
+        }
+      },
+    ]
   })
 }
 
