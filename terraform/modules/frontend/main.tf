@@ -70,5 +70,5 @@ output "bucket" {
 }
 
 output "website_endpoint" {
-  value = "http://${aws_s3_bucket.frontend.id}.s3-website.localhost.localstack.cloud:4566"
+  value = aws_s3_bucket_website_configuration.frontend.website_endpoint
 }

@@ -10,25 +10,10 @@ variable "private_subnets" { type = list(string) }
 variable "ecs_security_group_id" { type = string }
 
 # ── ECR Repository ───────────────────────────────────────────────────────────
-resource "terraform_data" "ecr_pre_delete" {
-  triggers_replace = { repo_name = "${local.name}-repo" }
-
-  provisioner "local-exec" {
-    interpreter = ["powershell", "-NoProfile", "-Command"]
-    environment = {
-      AWS_ACCESS_KEY_ID     = "test"
-      AWS_SECRET_ACCESS_KEY = "test"
-      AWS_DEFAULT_REGION    = var.region
-    }
-    command = "try { aws ecr delete-repository --repository-name ${local.name}-repo --force --endpoint-url http://localhost:4566 --region ${var.region} 2>$null } catch {}; exit 0"
-  }
-}
-
 resource "aws_ecr_repository" "notification" {
   name = "${local.name}-repo"
   image_scanning_configuration { scan_on_push = false }
   force_delete = true
-  depends_on = [terraform_data.ecr_pre_delete]
   lifecycle { ignore_changes = [image_scanning_configuration, image_tag_mutability] }
 }
 
@@ -128,13 +113,12 @@ resource "aws_ecs_task_definition" "task" {
 
   container_definitions = jsonencode([{
     name  = "notification"
-    image = "000000000000.dkr.ecr.${var.region}.localhost.localstack.cloud:4566/${local.name}:latest"
+    image = "${aws_ecr_repository.notification.repository_url}:latest"
     essential = true
     portMappings = [{ containerPort = 8000, hostPort = 8000, protocol = "tcp" }]
     environment = [
       { name = "AWS_REGION",           value = var.region },
       { name = "AWS_DEFAULT_REGION",   value = var.region },
-      { name = "AWS_ENDPOINT_URL",     value = "http://localstack:4566" },
       { name = "DEBUG",                value = "False" },
       { name = "EVENTS_SQS_QUEUE_URL", value = aws_sqs_queue.app_events.url },
       { name = "EMAIL_HOST",           value = var.smtp_host },
@@ -142,7 +126,7 @@ resource "aws_ecs_task_definition" "task" {
       { name = "EMAIL_HOST_USER",      value = var.smtp_user },
       { name = "EMAIL_HOST_PASSWORD",  value = nonsensitive(var.smtp_password) },
       { name = "DEFAULT_FROM_EMAIL",   value = var.email_from },
-      { name = "AUTH_SERVICE_URL",     value = "http://prod-config-auth-alb.elb.localhost.localstack.cloud:4566/api/v2" },
+      { name = "AUTH_SERVICE_URL",     value = var.auth_service_url },
     ]
     logConfiguration = {
       logDriver = "awslogs"
@@ -223,7 +207,7 @@ variable "google_oauth_client_secret" {
 
 variable "google_oauth_redirect_uri" {
   type    = string
-  default = "http://localhost:8003/api/v2/google/callback/"
+  default = ""
 }
 
 variable "google_token_encryption_key" {
@@ -250,7 +234,7 @@ variable "auth_service_url" {
 # becomes the notification_jobs URL output below.
 variable "payment_success_queue_url" {
   type    = string
-  default = "http://localstack:4566/000000000000/payment-success"
+  default = ""
 }
 
 resource "aws_dynamodb_table" "notifications" {
@@ -374,7 +358,6 @@ output "container_env_vars" {
     GOOGLE_OAUTH_CLIENT_SECRET  = var.google_oauth_client_secret
     GOOGLE_OAUTH_REDIRECT_URI   = var.google_oauth_redirect_uri
     GOOGLE_TOKEN_ENCRYPTION_KEY = var.google_token_encryption_key
-    AWS_ENDPOINT_URL            = "http://localstack:4566"
     AWS_REGION                  = var.region
     AWS_DEFAULT_REGION          = var.region
   }

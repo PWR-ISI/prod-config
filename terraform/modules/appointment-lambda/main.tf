@@ -104,8 +104,6 @@ resource "aws_lambda_function" "appointment" {
   memory_size      = 256
 
   # Lambda in VPC so it can reach the RDS instance on a private subnet.
-  # LocalStack PRO supports VPC Lambdas; on real AWS add a NAT GW if the
-  # function also needs outbound internet.
   vpc_config {
     subnet_ids         = var.private_subnets
     security_group_ids = [var.ecs_security_group_id]
@@ -119,7 +117,6 @@ resource "aws_lambda_function" "appointment" {
       DB_USER              = var.db_username
       DB_PASSWORD          = nonsensitive(var.db_password)
       NOTIFICATION_SQS_URL = var.notification_sqs_url
-      AWS_ENDPOINT_URL     = "http://localstack:4566"
       FUNCTION_NAME        = each.key
     }
   }
@@ -133,7 +130,7 @@ resource "aws_lambda_function" "appointment" {
 
 # ── API Gateway HTTP API (v2) → Lambda ───────────────────────────────────────
 # HTTP API is cheaper and lower-latency than REST API; no per-method throttling
-# needed at this stage. LocalStack PRO supports both.
+# needed at this stage.
 
 resource "aws_apigatewayv2_api" "appointments" {
   name          = "${local.name}-api"
