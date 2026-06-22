@@ -238,10 +238,21 @@ resource "aws_sns_topic" "schedule_events" {
   name = "${local.name}-events"
 }
 
+resource "aws_sqs_queue" "schedule_inbox_dlq" {
+  name                      = "${local.name}-inbox-dlq"
+  message_retention_seconds = 1209600
+  tags = { Project = var.project_name, Purpose = "dead-letter" }
+}
+
 resource "aws_sqs_queue" "schedule_inbox" {
   name                       = "${local.name}-inbox"
   visibility_timeout_seconds = 60
   message_retention_seconds  = 1209600
+
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.schedule_inbox_dlq.arn
+    maxReceiveCount     = 3
+  })
 }
 
 data "aws_caller_identity" "current" {}

@@ -273,7 +273,7 @@ Use **ngrok** to expose LocalStack port 4566 with a static domain.
 
 ```powershell
 ngrok http `
-  --url=<YOUR-STATIC-DOMAIN>.ngrok-free.app `
+  --url=<YOUR-STATIC-DOMAIN>.ngrok-free.dev `
   --host-header="prod-config-payment-alb.elb.localhost.localstack.cloud" `
   4566
 ```
@@ -286,7 +286,7 @@ ngrok http `
 Set `BASE_URL` in `payment-service/.env` to the ngrok domain:
 
 ```ini
-BASE_URL=https://<YOUR-STATIC-DOMAIN>.ngrok-free.app
+BASE_URL=https://<YOUR-STATIC-DOMAIN>.ngrok-free.dev
 ```
 
 Then rebuild and redeploy the payment-service so the new `BASE_URL` is baked into the container

@@ -132,10 +132,17 @@ resource "aws_ecs_task_definition" "task" {
     essential = true
     portMappings = [{ containerPort = 8000, hostPort = 8000, protocol = "tcp" }]
     environment = [
-      { name = "AWS_REGION", value = var.region },
-      { name = "AWS_DEFAULT_REGION", value = var.region },
-      { name = "AWS_ENDPOINT_URL", value = "http://localstack:4566" },
-      { name = "DEBUG", value = "False" },
+      { name = "AWS_REGION",           value = var.region },
+      { name = "AWS_DEFAULT_REGION",   value = var.region },
+      { name = "AWS_ENDPOINT_URL",     value = "http://localstack:4566" },
+      { name = "DEBUG",                value = "False" },
+      { name = "EVENTS_SQS_QUEUE_URL", value = aws_sqs_queue.app_events.url },
+      { name = "EMAIL_HOST",           value = var.smtp_host },
+      { name = "EMAIL_PORT",           value = tostring(var.smtp_port) },
+      { name = "EMAIL_HOST_USER",      value = var.smtp_user },
+      { name = "EMAIL_HOST_PASSWORD",  value = nonsensitive(var.smtp_password) },
+      { name = "DEFAULT_FROM_EMAIL",   value = var.email_from },
+      { name = "AUTH_SERVICE_URL",     value = "http://prod-config-auth-alb.elb.localhost.localstack.cloud:4566/api/v2" },
     ]
     logConfiguration = {
       logDriver = "awslogs"
@@ -172,6 +179,30 @@ resource "aws_ecs_service" "service" {
   depends_on = [aws_lb_listener.http]
 
   lifecycle { ignore_changes = [availability_zone_rebalancing] }
+}
+
+# ── SMTP (outbound email) ─────────────────────────────────────────────────────
+variable "smtp_host" {
+  type    = string
+  default = ""
+}
+variable "smtp_port" {
+  type    = number
+  default = 465
+}
+variable "smtp_user" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+variable "smtp_password" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+variable "email_from" {
+  type    = string
+  default = ""
 }
 
 # ── Google Calendar integration (Priority 2) ──────────────────────────────────
@@ -239,12 +270,47 @@ resource "aws_sns_topic" "notifications" {
   name = "${var.project_name}-notifications"
 }
 
+resource "aws_sqs_queue" "app_events_dlq" {
+  name                      = "${var.project_name}-app-events-dlq"
+  message_retention_seconds = 1209600
+  tags = { Service = "notification", Purpose = "dead-letter" }
+}
+
 resource "aws_sqs_queue" "app_events" {
   name = "${var.project_name}-app-events"
+
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.app_events_dlq.arn
+    maxReceiveCount     = 3
+  })
+}
+
+resource "aws_sqs_queue_policy" "app_events_policy" {
+  queue_url = aws_sqs_queue.app_events.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "sns.amazonaws.com" }
+      Action    = "sqs:SendMessage"
+      Resource  = aws_sqs_queue.app_events.arn
+    }]
+  })
+}
+
+resource "aws_sqs_queue" "notification_jobs_dlq" {
+  name                      = "${var.project_name}-notification-jobs-dlq"
+  message_retention_seconds = 1209600
+  tags = { Service = "notification", Purpose = "dead-letter" }
 }
 
 resource "aws_sqs_queue" "notification_jobs" {
   name = "${var.project_name}-notification-jobs"
+
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.notification_jobs_dlq.arn
+    maxReceiveCount     = 3
+  })
 }
 
 resource "aws_sqs_queue_policy" "notification_jobs" {
@@ -269,6 +335,7 @@ resource "aws_sns_topic_subscription" "notification_jobs" {
 
 output "sns_topic_arn" { value = aws_sns_topic.notifications.arn }
 output "sqs_app_events_url" { value = aws_sqs_queue.app_events.url }
+output "sqs_app_events_arn" { value = aws_sqs_queue.app_events.arn }
 output "sqs_notification_jobs_url" { value = aws_sqs_queue.notification_jobs.url }
 output "dynamodb_table_name" { value = aws_dynamodb_table.notifications.name }
 

@@ -138,8 +138,10 @@ resource "aws_ecs_task_definition" "task" {
         { name = "DB_NAME", value = "coredb" },
         { name = "DB_USER", value = var.db_username },
         { name = "DB_PASSWORD", value = nonsensitive(var.db_password) },
-        { name = "SQS_APP_EVENTS_URL", value = var.sqs_app_events_url },
-        { name = "COGNITO_USER_POOL_ID", value = var.cognito_user_pool_id },
+        { name = "SQS_APP_EVENTS_URL",        value = var.sqs_app_events_url },
+        { name = "COGNITO_USER_POOL_ID",       value = var.cognito_user_pool_id },
+        { name = "APPOINTMENT_SNS_TOPIC_ARN",  value = aws_sns_topic.appointment_events.arn },
+        { name = "AWS_ENDPOINT_URL",           value = "http://localstack:4566" },
       ]
       logConfiguration = {
         logDriver = "awslogs"
@@ -245,10 +247,21 @@ resource "aws_sns_topic" "appointment_events" {
 
 # Inbox queue this service drains. Populated by subscriptions to other
 # services' topics — payment events especially.
+resource "aws_sqs_queue" "appointment_inbox_dlq" {
+  name                      = "${local.name}-inbox-dlq"
+  message_retention_seconds = 1209600
+  tags = { Project = var.project_name, Purpose = "dead-letter" }
+}
+
 resource "aws_sqs_queue" "appointment_inbox" {
   name                       = "${local.name}-inbox"
   visibility_timeout_seconds = 60
   message_retention_seconds  = 1209600
+
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.appointment_inbox_dlq.arn
+    maxReceiveCount     = 3
+  })
 }
 
 # Policy allowing SNS within this account to deliver to the inbox queue.

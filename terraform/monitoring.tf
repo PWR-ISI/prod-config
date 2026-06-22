@@ -312,6 +312,22 @@ resource "aws_cloudwatch_metric_alarm" "rds_storage_low" {
 }
 
 # ── CloudWatch Dashboard ───────────────────────────────────────────────────────
+locals {
+  # Service-specific event queues (actual event buses, not the placeholder sqs module queues)
+  service_inbox_queues = {
+    "schedule-inbox"       = "${var.project_name}-schedule-inbox"
+    "appointment-inbox"    = "${var.project_name}-core-inbox"
+    "notification-events"  = "${var.project_name}-app-events"
+    "notification-jobs"    = "${var.project_name}-notification-jobs"
+  }
+  service_inbox_dlqs = {
+    "schedule-inbox"      = "${var.project_name}-schedule-inbox-dlq"
+    "appointment-inbox"   = "${var.project_name}-core-inbox-dlq"
+    "notification-events" = "${var.project_name}-app-events-dlq"
+    "notification-jobs"   = "${var.project_name}-notification-jobs-dlq"
+  }
+}
+
 resource "aws_cloudwatch_dashboard" "main" {
   provider       = aws.localstack
   dashboard_name = "${var.project_name}-main"
@@ -322,13 +338,13 @@ resource "aws_cloudwatch_dashboard" "main" {
         type = "metric"
         properties = {
           metrics = [
-            for key, arn in module.sqs.queue_arns :
-            ["AWS/SQS", "ApproximateNumberOfMessagesVisible", { label = key }]
+            for key, qname in local.service_inbox_queues :
+            ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", qname, { label = key }]
           ]
           period = 300
           stat   = "Average"
           region = var.region
-          title  = "SQS Queue Depths"
+          title  = "SQS Event Queues (service inboxes)"
           yAxis  = { left = { min = 0 } }
         }
       },
@@ -336,42 +352,75 @@ resource "aws_cloudwatch_dashboard" "main" {
         type = "metric"
         properties = {
           metrics = [
-            for key, arn in module.sqs.dlq_arns :
-            ["AWS/SQS", "ApproximateNumberOfMessagesVisible", { label = "${key} DLQ" }]
+            for key, qname in local.service_inbox_dlqs :
+            ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", qname, { label = key }]
           ]
           period = 300
           stat   = "Sum"
           region = var.region
           title  = "SQS Dead Letter Queues"
           yAxis  = { left = { min = 0 } }
+          annotations = {
+            horizontal = [{ value = 1, label = "Alert threshold", color = "#ff0000" }]
+          }
+        }
+      },
+      {
+        type = "metric"
+        properties = {
+          metrics = concat(
+            [for key, v in local.ecs_clusters :
+              ["AWS/ECS", "RunningCount", "ClusterName", v.cluster, "ServiceName", v.service, { label = key }]
+            ]
+          )
+          period = 60
+          stat   = "Average"
+          region = var.region
+          title  = "ECS Running Task Count (per service)"
+          yAxis  = { left = { min = 0 } }
+        }
+      },
+      {
+        type = "metric"
+        properties = {
+          metrics = concat(
+            [for key, v in local.ecs_clusters :
+              ["AWS/ECS", "CPUUtilization", "ClusterName", v.cluster, "ServiceName", v.service, { label = key }]
+            ]
+          )
+          period = 300
+          stat   = "Average"
+          region = var.region
+          title  = "ECS CPU Utilization % (per service)"
+          yAxis  = { left = { min = 0, max = 100 } }
         }
       },
       {
         type = "metric"
         properties = {
           metrics = [
-            ["AWS/ECS", "RunningCount", { label = "Running Tasks" }],
-            [".", "CPUUtilization", { label = "CPU Avg" }],
-            [".", "MemoryUtilization", { label = "Memory Avg" }],
+            for key, v in local.rds_instances :
+            ["AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", v.identifier, { label = key }]
           ]
           period = 300
           stat   = "Average"
           region = var.region
-          title  = "ECS Services Overview"
+          title  = "RDS CPU Utilization %"
+          yAxis  = { left = { min = 0, max = 100 } }
         }
       },
       {
         type = "metric"
         properties = {
           metrics = [
-            ["AWS/RDS", "CPUUtilization", { label = "RDS CPU" }],
-            [".", "DatabaseConnections", { label = "Connections" }],
-            [".", "FreeStorageSpace", { label = "Free Storage" }],
+            for key, v in local.rds_instances :
+            ["AWS/RDS", "DatabaseConnections", "DBInstanceIdentifier", v.identifier, { label = key }]
           ]
           period = 300
           stat   = "Average"
           region = var.region
-          title  = "RDS Databases Overview"
+          title  = "RDS Database Connections"
+          yAxis  = { left = { min = 0 } }
         }
       },
     ]

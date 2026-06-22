@@ -51,6 +51,13 @@ module "notification_service" {
   google_oauth_client_secret  = var.google_oauth_client_secret
   google_oauth_redirect_uri   = var.google_oauth_redirect_uri
   google_token_encryption_key = var.google_token_encryption_key
+
+  # SMTP for outbound email notifications
+  smtp_host     = var.smtp_host
+  smtp_port     = var.smtp_port
+  smtp_user     = var.smtp_user
+  smtp_password = var.smtp_password
+  email_from    = var.email_from
 }
 
 module "facility_service" {
@@ -169,11 +176,34 @@ module "frontend" {
 # Each service module owns its own SNS topic (publish) and SQS inbox (consume).
 # Subscriptions are declared here to avoid circular module dependencies.
 
+# schedule-service receives appointment events (slot booking, cancellation)
 resource "aws_sns_topic_subscription" "schedule_inbox_subscribes_to_appointment" {
   provider  = aws.localstack
   topic_arn = module.appointment_service.sns_topic_arn
   protocol  = "sqs"
   endpoint  = module.schedule_service.sqs_queue_arn
+}
+
+# notification-service receives all domain events to create in-app + email notifications
+resource "aws_sns_topic_subscription" "notification_subscribes_to_appointment" {
+  provider  = aws.localstack
+  topic_arn = module.appointment_service.sns_topic_arn
+  protocol  = "sqs"
+  endpoint  = module.notification_service.sqs_app_events_arn
+}
+
+resource "aws_sns_topic_subscription" "notification_subscribes_to_payment" {
+  provider  = aws.localstack
+  topic_arn = module.payment_service.sns_topic_arn
+  protocol  = "sqs"
+  endpoint  = module.notification_service.sqs_app_events_arn
+}
+
+resource "aws_sns_topic_subscription" "notification_subscribes_to_schedule" {
+  provider  = aws.localstack
+  topic_arn = module.schedule_service.sns_topic_arn
+  protocol  = "sqs"
+  endpoint  = module.notification_service.sqs_app_events_arn
 }
 
 # Payment events → schedule-service so it can mark appointments as PAID

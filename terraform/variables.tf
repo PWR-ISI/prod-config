@@ -124,6 +124,30 @@ variable "use_direct_service_routing" {
   default = true
 }
 
+# ── SMTP (notification-service outbound email) ────────────────────────────────
+variable "smtp_host" {
+  type    = string
+  default = ""
+}
+variable "smtp_port" {
+  type    = number
+  default = 465
+}
+variable "smtp_user" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+variable "smtp_password" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+variable "email_from" {
+  type    = string
+  default = ""
+}
+
 # ── Google Calendar (notification-service) ────────────────────────────────────
 # Set via TF_VAR_google_oauth_client_id etc. in the shell, sourced from .env or
 # AWS Secrets Manager in prod. Default empty means the integration is dormant —
