@@ -29,7 +29,7 @@ variable "db_security_group_id" {
 
 variable "db_host" {
   type        = string
-  description = "DB host for ECS task. Override to a real container hostname for local dev (LocalStack RDS has no real connectivity)."
+  description = "DB host for ECS task. Leave empty to use the RDS instance endpoint."
   default     = ""  # empty = use aws_db_instance endpoint
 }
 
@@ -62,4 +62,23 @@ variable "payu_oauth_client_id" {
 variable "payu_oauth_client_secret" {
   type      = string
   sensitive = true
+}
+
+
+variable "payment_success_queue_url" {
+  type        = string
+  default     = ""
+  description = "SQS URL for payment-success events. Set to the actual queue URL (from sqs module or elsewhere)."
+}
+
+variable "payment_failed_queue_url" {
+  type        = string
+  default     = ""
+  description = "SQS URL for payment-failed events."
+}
+
+variable "frontend_url" {
+  type        = string
+  default     = ""
+  description = "Public URL of the frontend (S3 website or CloudFront). Used in PayU redirect URLs."
 }

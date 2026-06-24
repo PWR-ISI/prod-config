@@ -2,25 +2,9 @@ locals {
   name = "${var.project_name}-schedule"
 }
 
-resource "terraform_data" "ecr_pre_delete" {
-  triggers_replace = { repo_name = "${local.name}-repo" }
-
-  provisioner "local-exec" {
-    interpreter = ["powershell", "-NoProfile", "-Command"]
-    environment = {
-      AWS_ACCESS_KEY_ID     = "test"
-      AWS_SECRET_ACCESS_KEY = "test"
-      AWS_DEFAULT_REGION    = var.region
-    }
-    command = "try { aws ecr delete-repository --repository-name ${local.name}-repo --force --endpoint-url http://localhost:4566 --region ${var.region} 2>$null } catch {}; exit 0"
-  }
-}
-
 resource "aws_ecr_repository" "schedule" {
   name         = "${local.name}-repo"
   force_delete = true
-
-  depends_on = [terraform_data.ecr_pre_delete]
 
   lifecycle {
     ignore_changes = [image_scanning_configuration, image_tag_mutability]

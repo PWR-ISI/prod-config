@@ -4,10 +4,13 @@ locals {
 
 resource "aws_ecr_repository" "facility" {
   name = "${local.name}-repo"
-  count = 0
 
   image_scanning_configuration { scan_on_push = false }
   force_delete = true
+
+  lifecycle {
+    ignore_changes = [image_scanning_configuration, image_tag_mutability]
+  }
 }
 
 resource "aws_cloudwatch_log_group" "facility" {
@@ -108,7 +111,7 @@ resource "aws_ecs_task_definition" "task" {
   container_definitions = jsonencode([
     {
       name         = "facility"
-      image        = "000000000000.dkr.ecr.${var.region}.localhost.localstack.cloud:4566/${local.name}:latest"
+      image        = "${aws_ecr_repository.facility.repository_url}:latest"
       essential    = true
       portMappings = [{ containerPort = 8000, hostPort = 8000, protocol = "tcp" }]
       environment = [

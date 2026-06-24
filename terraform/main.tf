@@ -1,28 +1,24 @@
 module "network" {
   source       = "./modules/network"
-  providers    = { aws = aws.localstack }
   project_name = var.project_name
 }
 
 module "cognito" {
   source       = "./modules/cognito"
-  providers    = { aws = aws.localstack }
   project_name = var.project_name
 }
 
 module "sqs" {
   source       = "./modules/sqs"
-  providers    = { aws = aws.localstack }
   project_name = var.project_name
 }
 
 module "auth_service" {
-  source    = "./modules/auth-identity-service"
-  providers = { aws = aws.localstack }
+  source = "./modules/auth-identity-service"
 
-  project_name            = var.project_name
-  region                  = var.region
-  vpc_id                  = module.network.vpc_id
+  project_name           = var.project_name
+  region                 = var.region
+  vpc_id                 = module.network.vpc_id
   public_subnets         = module.network.public_subnets
   private_subnets        = module.network.private_subnets
   db_subnets             = module.network.db_subnets
@@ -35,8 +31,7 @@ module "auth_service" {
 }
 
 module "notification_service" {
-  source    = "./modules/notification-service"
-  providers = { aws = aws.localstack }
+  source = "./modules/notification-service"
 
   project_name          = var.project_name
   region                = var.region
@@ -44,15 +39,13 @@ module "notification_service" {
   public_subnets        = module.network.public_subnets
   private_subnets       = module.network.private_subnets
   ecs_security_group_id = module.network.ecs_sg_id
+  auth_service_url      = "http://${module.auth_service.alb_dns}/api/v2"
 
-  # Google Calendar OAuth2 (Priority 2). Defaults are empty — set via
-  # TF_VAR_google_oauth_* in the deploy shell to activate.
   google_oauth_client_id      = var.google_oauth_client_id
   google_oauth_client_secret  = var.google_oauth_client_secret
   google_oauth_redirect_uri   = var.google_oauth_redirect_uri
   google_token_encryption_key = var.google_token_encryption_key
 
-  # SMTP for outbound email notifications
   smtp_host     = var.smtp_host
   smtp_port     = var.smtp_port
   smtp_user     = var.smtp_user
@@ -61,8 +54,7 @@ module "notification_service" {
 }
 
 module "facility_service" {
-  source    = "./modules/facility-staff-service"
-  providers = { aws = aws.localstack }
+  source = "./modules/facility-staff-service"
 
   project_name          = var.project_name
   region                = var.region
@@ -78,8 +70,7 @@ module "facility_service" {
 }
 
 module "medical_service" {
-  source    = "./modules/medical-record-service"
-  providers = { aws = aws.localstack }
+  source = "./modules/medical-record-service"
 
   project_name          = var.project_name
   region                = var.region
@@ -95,8 +86,7 @@ module "medical_service" {
 }
 
 module "audit_service" {
-  source    = "./modules/audit-logging-service"
-  providers = { aws = aws.localstack }
+  source = "./modules/audit-logging-service"
 
   project_name          = var.project_name
   region                = var.region
@@ -111,10 +101,8 @@ module "audit_service" {
   cognito_user_pool_id  = module.cognito.user_pool_id
 }
 
-
-module "schedule_lambda" {
-  source    = "./modules/schedule-lambda"
-  providers = { aws = aws.localstack }
+module "appointment_lambda" {
+  source = "./modules/appointment-lambda"
 
   project_name          = var.project_name
   region                = var.region
@@ -129,8 +117,7 @@ module "schedule_lambda" {
 }
 
 module "payment_service" {
-  source    = "./modules/payment-service"
-  providers = { aws = aws.localstack }
+  source = "./modules/payment-service"
 
   project_name             = var.project_name
   region                   = var.region
@@ -146,11 +133,11 @@ module "payment_service" {
   payu_api_key             = var.payu_api_key
   payu_oauth_client_id     = var.payu_oauth_client_id
   payu_oauth_client_secret = var.payu_oauth_client_secret
+  frontend_url             = module.frontend.website_endpoint
 }
 
 module "frontend" {
   source       = "./modules/frontend"
-  providers    = { aws = aws.localstack }
   project_name = var.project_name
   region       = var.region
 }
@@ -160,28 +147,21 @@ module "frontend" {
 # Subscriptions are declared here to avoid circular module dependencies.
 
 # appointment-service ECS removed — Lambda publishes directly to notification SQS.
-# schedule and notification subscriptions to appointment SNS are no longer needed.
-
 resource "aws_sns_topic_subscription" "notification_subscribes_to_payment" {
-  provider  = aws.localstack
   topic_arn = module.payment_service.sns_topic_arn
   protocol  = "sqs"
   endpoint  = module.notification_service.sqs_app_events_arn
 }
 
 resource "aws_sns_topic_subscription" "notification_subscribes_to_schedule" {
-  provider  = aws.localstack
-  topic_arn = module.schedule_lambda.sns_topic_arn
+  topic_arn = module.schedule_service.sns_topic_arn
   protocol  = "sqs"
   endpoint  = module.notification_service.sqs_app_events_arn
 }
 
 # Payment events → schedule-lambda so it can mark appointments as PAID
 resource "aws_sns_topic_subscription" "schedule_inbox_subscribes_to_payment" {
-  provider  = aws.localstack
   topic_arn = module.payment_service.sns_topic_arn
   protocol  = "sqs"
   endpoint  = module.schedule_lambda.sqs_queue_arn
 }
-
-# appointment_inbox_subscribes_to_schedule removed — appointment ECS no longer exists.

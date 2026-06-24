@@ -2,27 +2,11 @@ locals {
   name = "${var.project_name}-payment"
 }
 
-resource "terraform_data" "ecr_pre_delete" {
-  triggers_replace = { repo_name = "${local.name}-repo" }
-
-  provisioner "local-exec" {
-    interpreter = ["powershell", "-NoProfile", "-Command"]
-    environment = {
-      AWS_ACCESS_KEY_ID     = "test"
-      AWS_SECRET_ACCESS_KEY = "test"
-      AWS_DEFAULT_REGION    = var.region
-    }
-    command = "try { aws ecr delete-repository --repository-name ${local.name}-repo --force --endpoint-url http://localhost:4566 --region ${var.region} 2>$null } catch {}; exit 0"
-  }
-}
-
 resource "aws_ecr_repository" "payment" {
   name = "${local.name}-repo"
 
   image_scanning_configuration { scan_on_push = false }
   force_delete = true
-
-  depends_on = [terraform_data.ecr_pre_delete]
 
   lifecycle {
     ignore_changes = [image_scanning_configuration, image_tag_mutability]
@@ -159,29 +143,25 @@ resource "aws_ecs_task_definition" "task" {
       image        = "${aws_ecr_repository.payment.repository_url}:latest"
       essential    = true
       portMappings = [{ containerPort = 8000, hostPort = 8000, protocol = "tcp" }]
-      # LocalStack ECS ignores entryPoint — put sh -c in command so Docker CMD is ["sh","-c","..."]
       command = ["sh", "-c", "python manage.py migrate --noinput && gunicorn payment.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 120"]
       environment = [
-        { name = "AWS_ENDPOINT_URL",                  value = "http://localstack:4566" },
         { name = "AWS_REGION",                        value = var.region },
         { name = "AWS_DEFAULT_REGION",                value = var.region },
-        { name = "AWS_ACCESS_KEY_ID",                 value = "test" },
-        { name = "AWS_SECRET_ACCESS_KEY",             value = "test" },
         { name = "DJANGO_DB_HOST",                    value = var.db_host != "" ? var.db_host : aws_db_instance.payment.address },
         { name = "DJANGO_DB_PORT",                    value = tostring(aws_db_instance.payment.port) },
         { name = "DJANGO_DB_NAME",                    value = "payment_db" },
         { name = "DJANGO_DB_USER",                    value = var.db_username },
         { name = "DJANGO_DB_PASSWORD",                value = nonsensitive(var.db_password) },
         { name = "ALLOWED_HOSTS",                     value = "*" },
-        { name = "AWS_SQS_PAYMENT_SUCCESS_QUEUE_URL", value = "http://localstack:4566/000000000000/payment-success" },
-        { name = "AWS_SQS_PAYMENT_FAILED_QUEUE_URL",  value = "http://localstack:4566/000000000000/payment-failed" },
+        { name = "AWS_SQS_PAYMENT_SUCCESS_QUEUE_URL", value = var.payment_success_queue_url },
+        { name = "AWS_SQS_PAYMENT_FAILED_QUEUE_URL",  value = var.payment_failed_queue_url },
         { name = "PAYU_MERCHANT_ID",                  value = nonsensitive(var.payu_merchant_id) },
         { name = "PAYU_API_KEY",                      value = nonsensitive(var.payu_api_key) },
         { name = "PAYU_OAUTH_CLIENT_ID",              value = nonsensitive(var.payu_oauth_client_id) },
         { name = "PAYU_OAUTH_CLIENT_SECRET",          value = nonsensitive(var.payu_oauth_client_secret) },
         { name = "PAYU_SANDBOX_MODE",                 value = "true" },
         { name = "BASE_URL",                          value = "http://${aws_lb.alb.dns_name}" },
-        { name = "FRONTEND_URL",                      value = "http://${var.project_name}-frontend.s3-website.localhost.localstack.cloud:4566" },
+        { name = "FRONTEND_URL",                      value = var.frontend_url },
         { name = "PAYMENT_SNS_TOPIC_ARN",             value = aws_sns_topic.payment_events.arn },
         { name = "DEBUG",                             value = "True" },
       ]
