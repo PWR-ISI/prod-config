@@ -260,6 +260,50 @@ More ready-made API checks are in **`api-test-commands.txt`**.
 
 ---
 
+## 6b. CloudWatch Dashboard Demo (Project 3 monitoring)
+
+The Terraform config creates a **CloudWatch dashboard** displaying Lambda execution metrics,
+SQS queue depths, ECS task counts, and Dead Letter Queue activity. To **populate the dashboard
+with realistic metrics** (since LocalStack doesn't emit real metrics), run the demo generator:
+
+```powershell
+cd D:\Projects\ISI\prod-config
+$env:AWS_ACCESS_KEY_ID="test"; $env:AWS_SECRET_ACCESS_KEY="test"; $env:AWS_DEFAULT_REGION="us-east-1"
+python scripts/demo-metrics.py
+```
+
+The script will:
+- **Every 15 seconds**, publish CloudWatch metrics simulating Lambda execution (duration, errors, throttles)
+- **Populate SQS queue depths** (appointment-inbox, notification events, etc.)
+- **Simulate Dead Letter Queue messages** (occasional failures to trigger alarms)
+- **Generate ECS task counts + CPU/memory** for each microservice
+- **Send sample event messages** to SQS queues (appointment.created, payment.succeeded, etc.)
+
+View the dashboard:
+1. Open **LocalStack UI:** `http://localhost:4566/`
+2. Navigate to **CloudWatch** → **Dashboards** → **prod-config-main**
+3. Watch metrics update in real-time as the script runs
+
+**Dashboard shows (Project 3 requirements):**
+- ✅ SQS event queue depths (appointment-inbox, schedule-inbox, notification-events, notification-jobs)
+- ✅ Dead Letter Queue message counts (triggers alarms when > 0)
+- ✅ Lambda execution metrics: duration (p95 ms), errors, throttles
+- ✅ ECS running task counts per service (auth, payment, notification, facility, medical, audit)
+- ✅ ECS CPU/Memory utilization (alerts when > 80% / > 85%)
+- ✅ RDS database connections + CPU
+
+**Alarms configured** (also in Terraform):
+- Lambda errors (any error = alert)
+- Lambda duration p95 > 20 s (slow DB queries)
+- Lambda throttles (concurrency limit hit)
+- SQS queue depth > 100 messages (backlog)
+- SQS message age > 1 hour (processing delay)
+- DLQ messages ≥ 1 (processing failures)
+- ECS running tasks < desired (service degradation)
+- ECS CPU > 80% / Memory > 85% (resource pressure)
+
+---
+
 ## 7. PayU payments (ngrok webhook)
 
 PayU sandbox needs a public HTTPS URL to send the payment webhook back to the payment-service.

@@ -111,8 +111,9 @@ module "audit_service" {
   cognito_user_pool_id  = module.cognito.user_pool_id
 }
 
-module "appointment_lambda" {
-  source    = "./modules/appointment-lambda"
+
+module "schedule_lambda" {
+  source    = "./modules/schedule-lambda"
   providers = { aws = aws.localstack }
 
   project_name          = var.project_name
@@ -125,23 +126,6 @@ module "appointment_lambda" {
   db_username           = var.db_username
   db_password           = var.db_password
   notification_sqs_url  = module.notification_service.sqs_app_events_url
-  cognito_user_pool_id  = module.cognito.user_pool_id
-}
-
-module "schedule_service" {
-  source    = "./modules/schedule-service"
-  providers = { aws = aws.localstack }
-
-  project_name          = var.project_name
-  region                = var.region
-  vpc_id                = module.network.vpc_id
-  public_subnets        = module.network.public_subnets
-  private_subnets       = module.network.private_subnets
-  db_subnets            = module.network.db_subnets
-  ecs_security_group_id = module.network.ecs_sg_id
-  db_security_group_id  = module.network.db_sg_id
-  db_username           = var.db_username
-  db_password           = var.db_password
 }
 
 module "payment_service" {
@@ -187,17 +171,17 @@ resource "aws_sns_topic_subscription" "notification_subscribes_to_payment" {
 
 resource "aws_sns_topic_subscription" "notification_subscribes_to_schedule" {
   provider  = aws.localstack
-  topic_arn = module.schedule_service.sns_topic_arn
+  topic_arn = module.schedule_lambda.sns_topic_arn
   protocol  = "sqs"
   endpoint  = module.notification_service.sqs_app_events_arn
 }
 
-# Payment events → schedule-service so it can mark appointments as PAID
+# Payment events → schedule-lambda so it can mark appointments as PAID
 resource "aws_sns_topic_subscription" "schedule_inbox_subscribes_to_payment" {
   provider  = aws.localstack
   topic_arn = module.payment_service.sns_topic_arn
   protocol  = "sqs"
-  endpoint  = module.schedule_service.sqs_queue_arn
+  endpoint  = module.schedule_lambda.sqs_queue_arn
 }
 
 # appointment_inbox_subscribes_to_schedule removed — appointment ECS no longer exists.
