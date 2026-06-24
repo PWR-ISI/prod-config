@@ -83,19 +83,6 @@ resource "aws_cloudwatch_metric_alarm" "ecs_running_tasks_auth" {
   }
 }
 
-resource "aws_cloudwatch_metric_alarm" "ecs_running_tasks_schedule" {
-  alarm_name          = "${var.project_name}-schedule-running-tasks"
-  comparison_operator = "LessThanThreshold"
-  evaluation_periods  = "2"
-  metric_name         = "RunningCount"
-  namespace           = "AWS/ECS"
-  period              = "60"
-  statistic           = "Average"
-  threshold           = "1"
-  alarm_description   = "schedule-service: Running task count below desired"
-  alarm_actions       = [aws_sns_topic.alarms.arn]
-  dimensions          = { FunctionName = each.value }
-}
 
 resource "aws_cloudwatch_metric_alarm" "ecs_running_tasks_payment" {
   alarm_name          = "${var.project_name}-payment-running-tasks"
@@ -189,7 +176,7 @@ resource "aws_cloudwatch_metric_alarm" "ecs_running_tasks_audit" {
 
 # ── ECS CPU Utilization Alarms ────────────────────────────────────────────────
 resource "aws_cloudwatch_metric_alarm" "ecs_cpu_high" {
-  for_each            = toset(["auth", "schedule", "payment", "notification", "facility", "medical", "audit"])
+  for_each            = local.ecs_clusters
   alarm_name          = "${var.project_name}-${each.key}-cpu-high"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = "3"
@@ -202,14 +189,14 @@ resource "aws_cloudwatch_metric_alarm" "ecs_cpu_high" {
   alarm_actions       = [aws_sns_topic.alarms.arn]
 
   dimensions = {
-    ClusterName = local.ecs_clusters[each.key].cluster
-    ServiceName = local.ecs_clusters[each.key].service
+    ClusterName = each.value.cluster
+    ServiceName = each.value.service
   }
 }
 
 # ── ECS Memory Utilization Alarms ─────────────────────────────────────────────
 resource "aws_cloudwatch_metric_alarm" "ecs_memory_high" {
-  for_each            = toset(["auth", "schedule", "payment", "notification", "facility", "medical", "audit"])
+  for_each            = local.ecs_clusters
   alarm_name          = "${var.project_name}-${each.key}-memory-high"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = "3"
@@ -222,8 +209,8 @@ resource "aws_cloudwatch_metric_alarm" "ecs_memory_high" {
   alarm_actions       = [aws_sns_topic.alarms.arn]
 
   dimensions = {
-    ClusterName = local.ecs_clusters[each.key].cluster
-    ServiceName = local.ecs_clusters[each.key].service
+    ClusterName = each.value.cluster
+    ServiceName = each.value.service
   }
 }
 
@@ -282,66 +269,6 @@ resource "aws_cloudwatch_metric_alarm" "notification_sqs_dlq" {
 
   dimensions = {
     QueueName = "${var.project_name}-app-events-dlq"
-  }
-}
-
-# ── Lambda Error Rate Alarms ───────────────────────────────────────────────────
-# Any Lambda error is unusual; alert immediately (1 evaluation period = 1 error).
-resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
-  for_each            = module.appointment_lambda.function_names
-  alarm_name          = "${var.project_name}-lambda-${each.key}-errors"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  metric_name         = "Errors"
-  namespace           = "AWS/Lambda"
-  period              = 60
-  statistic           = "Sum"
-  threshold           = 1
-  alarm_description   = "Lambda ${each.key}: at least one execution error"
-  alarm_actions       = [aws_sns_topic.alarms.arn]
-
-  dimensions = {
-    FunctionName = each.value
-  }
-}
-
-# ── Lambda Duration Alarms ─────────────────────────────────────────────────────
-# DB calls from Lambda can be slow; 20 s threshold (Lambda timeout = 30 s)
-# gives a buffer to detect pathological queries before functions start timing out.
-resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
-  for_each            = module.appointment_lambda.function_names
-  alarm_name          = "${var.project_name}-lambda-${each.key}-duration"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 2
-  metric_name         = "Duration"
-  namespace           = "AWS/Lambda"
-  period              = 300
-  extended_statistic  = "p95"
-  threshold           = 20000
-  alarm_description   = "Lambda ${each.key}: p95 duration > 20 s"
-  alarm_actions       = [aws_sns_topic.alarms.arn]
-
-  dimensions = {
-    FunctionName = each.value
-  }
-}
-
-# ── Lambda Throttle Alarms ─────────────────────────────────────────────────────
-resource "aws_cloudwatch_metric_alarm" "lambda_throttles" {
-  for_each            = module.appointment_lambda.function_names
-  alarm_name          = "${var.project_name}-lambda-${each.key}-throttles"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  metric_name         = "Throttles"
-  namespace           = "AWS/Lambda"
-  period              = 60
-  statistic           = "Sum"
-  threshold           = 1
-  alarm_description   = "Lambda ${each.key}: throttled (concurrency limit hit)"
-  alarm_actions       = [aws_sns_topic.alarms.arn]
-
-  dimensions = {
-    FunctionName = each.value
   }
 }
 
@@ -505,34 +432,11 @@ locals {
 }
 
 # ── Notification-service health alarm ─────────────────────────────────────────
-# SQS messages failing after maxReceiveCount retries land in the DLQ, which
-# signals notification-service processing errors without needing a custom metric.
-# This DLQ alarm is the primary indicator of notification-service failures.
-# The ECS task-count alarm (above) covers infrastructure-level outages.
-resource "aws_cloudwatch_metric_alarm" "notification_sqs_dlq" {
-  provider            = aws.localstack
-  alarm_name          = "${var.project_name}-notification-processing-errors"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  metric_name         = "ApproximateNumberOfMessagesVisible"
-  namespace           = "AWS/SQS"
-  period              = 60
-  statistic           = "Sum"
-  threshold           = 1
-  alarm_description   = "notification-service: messages in DLQ indicate processing failures"
-  alarm_actions       = [aws_sns_topic.alarms.arn]
 
-  dimensions = {
-    QueueName = "${var.project_name}-app-events-dlq"
-  }
-}
-
-# ── Lambda Error Rate Alarms ───────────────────────────────────────────────────
-# Any Lambda error is unusual; alert immediately (1 evaluation period = 1 error).
-resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
-  provider            = aws.localstack
+# ── Lambda Error Rate Alarms (schedule) ───────────────────────────────────────
+resource "aws_cloudwatch_metric_alarm" "lambda_errors_schedule" {
   for_each            = module.schedule_lambda.function_names
-  alarm_name          = "${var.project_name}-lambda-${each.key}-errors"
+  alarm_name          = "${var.project_name}-lambda-schedule-${each.key}-errors"
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   metric_name         = "Errors"
@@ -548,13 +452,10 @@ resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
   }
 }
 
-# ── Lambda Duration Alarms ─────────────────────────────────────────────────────
-# DB calls from Lambda can be slow; 20 s threshold (Lambda timeout = 30 s)
-# gives a buffer to detect pathological queries before functions start timing out.
-resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
-  provider            = aws.localstack
+# ── Lambda Duration Alarms (schedule) ─────────────────────────────────────────
+resource "aws_cloudwatch_metric_alarm" "lambda_duration_schedule" {
   for_each            = module.schedule_lambda.function_names
-  alarm_name          = "${var.project_name}-lambda-${each.key}-duration"
+  alarm_name          = "${var.project_name}-lambda-schedule-${each.key}-duration"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
   metric_name         = "Duration"
@@ -570,11 +471,10 @@ resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
   }
 }
 
-# ── Lambda Throttle Alarms ─────────────────────────────────────────────────────
-resource "aws_cloudwatch_metric_alarm" "lambda_throttles" {
-  provider            = aws.localstack
+# ── Lambda Throttle Alarms (schedule) ─────────────────────────────────────────
+resource "aws_cloudwatch_metric_alarm" "lambda_throttles_schedule" {
   for_each            = module.schedule_lambda.function_names
-  alarm_name          = "${var.project_name}-lambda-${each.key}-throttles"
+  alarm_name          = "${var.project_name}-lambda-schedule-${each.key}-throttles"
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   metric_name         = "Throttles"

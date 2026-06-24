@@ -101,21 +101,6 @@ module "audit_service" {
   cognito_user_pool_id  = module.cognito.user_pool_id
 }
 
-module "appointment_lambda" {
-  source = "./modules/appointment-lambda"
-
-  project_name          = var.project_name
-  region                = var.region
-  vpc_id                = module.network.vpc_id
-  private_subnets       = module.network.private_subnets
-  db_subnets            = module.network.db_subnets
-  ecs_security_group_id = module.network.ecs_sg_id
-  db_security_group_id  = module.network.db_sg_id
-  db_username           = var.db_username
-  db_password           = var.db_password
-  notification_sqs_url  = module.notification_service.sqs_app_events_url
-}
-
 module "payment_service" {
   source = "./modules/payment-service"
 
@@ -136,6 +121,21 @@ module "payment_service" {
   frontend_url             = module.frontend.website_endpoint
 }
 
+module "schedule_lambda" {
+  source = "./modules/schedule-lambda"
+
+  project_name          = var.project_name
+  region                = var.region
+  vpc_id                = module.network.vpc_id
+  private_subnets       = module.network.private_subnets
+  db_subnets            = module.network.db_subnets
+  ecs_security_group_id = module.network.ecs_sg_id
+  db_security_group_id  = module.network.db_sg_id
+  db_username           = var.db_username
+  db_password           = var.db_password
+  notification_sqs_url  = module.notification_service.sqs_app_events_url
+}
+
 module "frontend" {
   source       = "./modules/frontend"
   project_name = var.project_name
@@ -154,7 +154,7 @@ resource "aws_sns_topic_subscription" "notification_subscribes_to_payment" {
 }
 
 resource "aws_sns_topic_subscription" "notification_subscribes_to_schedule" {
-  topic_arn = module.schedule_service.sns_topic_arn
+  topic_arn = module.schedule_lambda.sns_topic_arn
   protocol  = "sqs"
   endpoint  = module.notification_service.sqs_app_events_arn
 }
